@@ -48,7 +48,7 @@ export default function Playground() {
           <div className="flex gap-2 flex-wrap">
             {SAMPLES.map((s, i) => (
               <button
-                key={i}
+                key={`sample-${i}-${s.length}`}
                 data-testid={`pg-sample-${i}`}
                 onClick={() => setInput(s)}
                 className="text-xs font-mono px-2 py-1 border border-[rgb(var(--tf-border))] hover:border-[rgb(var(--tf-brand))] rounded-sm text-[rgb(var(--tf-text-2))] hover:text-white transition-colors"

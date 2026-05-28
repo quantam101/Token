@@ -220,7 +220,7 @@ def _embed(text: str, dim: int = 256) -> List[float]:
         return vec
     counts = Counter(tokens)
     for tok, cnt in counts.items():
-        h = int(hashlib.md5(tok.encode("utf-8")).hexdigest()[:8], 16)
+        h = int(hashlib.sha256(tok.encode("utf-8")).hexdigest()[:8], 16)
         idx = h % dim
         sign = 1.0 if (h >> 31) & 1 == 0 else -1.0
         vec[idx] += sign * (1.0 + math.log(cnt))

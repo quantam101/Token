@@ -574,6 +574,11 @@ async def proxy_chat(body: ProxyIn, request: Request, auth=Depends(require_api_k
     cached = await _semantic_cache_lookup(user["id"], prompt_to_send)
     cache_hit = bool(cached)
 
+    # Initialize so all downstream paths are guaranteed defined
+    response_text: str = ""
+    provider: str = "unknown"
+    model_used: str = "unknown"
+
     if cache_hit:
         response_text = cached["response"]
         provider = "cache"

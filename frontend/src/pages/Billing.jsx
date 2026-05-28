@@ -6,8 +6,7 @@ import { DashboardNav, Footer } from "@/components/Nav";
 import { toast } from "sonner";
 
 export default function Billing() {
-  const { user, refresh } = useAuth();
-  const nav = useNavigate();
+  const { user } = useAuth();
   const [plans, setPlans] = useState([]);
   const [busy, setBusy] = useState(null);
   const [cycle, setCycle] = useState("monthly");
@@ -19,6 +18,8 @@ export default function Billing() {
       setPlans(data.plans.filter((p) => p.id !== "free"));
       setDiscount(data.annual_discount_pct || 20);
     });
+    // Intentionally one-shot on mount; plan list is static for the session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const buy = async (planId) => {

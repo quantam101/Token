@@ -215,9 +215,9 @@ function Table({ rows }) {
       <table className="w-full font-mono text-sm">
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className={i ? "border-t border-[rgb(var(--tf-border))]" : ""}>
+            <tr key={`${r[0]}-${i}`} className={i ? "border-t border-[rgb(var(--tf-border))]" : ""}>
               {r.map((c, j) => (
-                <td key={j} className={`px-4 py-2 ${j === 0 ? "text-[rgb(var(--tf-brand))] whitespace-nowrap" : "text-[rgb(var(--tf-text-2))]"}`}>{c}</td>
+                <td key={`${r[0]}-${j}`} className={`px-4 py-2 ${j === 0 ? "text-[rgb(var(--tf-brand))] whitespace-nowrap" : "text-[rgb(var(--tf-text-2))]"}`}>{c}</td>
               ))}
             </tr>
           ))}

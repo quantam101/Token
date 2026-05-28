@@ -54,7 +54,9 @@ export default function Landing() {
       try {
         const { data } = await client.get("/stats/public");
         setStats(data);
-      } catch {}
+      } catch (e) {
+        console.warn("public stats fetch failed (non-blocking)", e);
+      }
     })();
     // Run an initial optimize on the sample so user sees instant value
     (async () => {
@@ -66,6 +68,8 @@ export default function Landing() {
         setCalcLoading(false);
       }
     })();
+    // One-shot on mount; SAMPLE is a module-level constant.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const submitCalc = async () => {
