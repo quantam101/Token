@@ -63,11 +63,32 @@
 - iter-7: 18/25 backend + 90% frontend — /embed routing bug diagnosed
 - iter-8: **25/25 backend + 100% frontend ✓** (embed widget — route moved under /api)
 
-### Iter-7/8 — Embeddable savings widget
-- `GET /api/widget.js` — tiny IIFE loader; hosts paste a one-line `<script src="…/api/widget.js" data-tf-slug="…" data-tf-theme="dark" async defer></script>`
-- `GET /api/embed/<slug>` — branded iframe HTML with dark/light theme + postMessage auto-resize + ALLOWALL X-Frame-Options + `frame-ancestors *` CSP
-- Share page `/share/<slug>` gets "Embed this widget →" panel with copyable snippet, live preview, dark/light toggle
-- `avg_compression_pct` capped at 100% in share JSON + embed HTML (cache hits previously could inflate past 100%)
+### Iter-11 — Launch features (OG image, Referrals, Showcase, CORS pin)
+- **OG image generator** `GET /api/share/savings/<slug>/og.png` — 1200×630 PNG via Pillow, branded TF header, hero number in matrix green, $ saved + avg compression cards, "Start saving — free →" CTA. Auto-injected into `/share/<slug>` page head as `og:image` + `twitter:image` for live LinkedIn/X/Slack previews. Placeholder returned (200, not 404) for unknown slugs so social cards never break.
+- **Referral system** — `POST /api/auth/register` now accepts `ref: <user_id>`; valid referral grants **+500K bonus tokens** to BOTH parties (atomic `$inc`). New `GET /api/referrals/me` endpoint returns the user's code + count + bonus. Dashboard exposes a Referral card with one-click copy of `/register?ref=<id>`. Register page reads `?ref=` and shows a green "REFERRAL BONUS unlocked" banner.
+- **Public showcase** — `GET /api/showcase/savings?limit=12` returns opted-in customers (those with share_links + actual savings) sorted by $ saved. Landing page now has a **"Used By" marquee strip** that fetches showcase data and renders deep-linked pills (each click goes to that customer's public share page → which has a free-signup CTA).
+- **Production CORS pin** — `CORS_ORIGINS` env list (comma-separated) replaces `*`. Preview + tokenforge.io origins included. `allow_credentials=False` keeps wildcard fallback safe.
+
+### Test posture
+- iter-1: 27/27 backend ✓
+- iter-2: 13/13 frontend ✓
+- iter-3: 33/33 + 6/6 ✓
+- iter-4: 14/18 backend + 5/5 frontend — XFF rate-limit bug diagnosed
+- iter-5: 6/6 rate-limit + 11/11 smoke + 100% frontend ✓
+- iter-6: 16/16 + 100% frontend ✓ (code-review fixes)
+- iter-7: 18/25 backend + 90% frontend — /embed routing diagnosed
+- iter-8: 25/25 backend + 100% frontend ✓ (embed widget)
+- iter-9: 25/25 + 100% ✓ (perf/readability polish)
+- iter-10: 25/25 + 100% ✓ (code-review polish 3)
+- iter-11: **38/38 backend + 100% frontend ✓** (OG, referrals, showcase, CORS — launch features)
+
+## Launch runbook
+See **`/app/memory/RESEND_DNS_SETUP.md`** for the step-by-step Resend domain verification in Zoho.
+
+After that:
+1. Edit `/app/backend/.env` → `SENDER_EMAIL="TokenForge <dispatch@alreadyherellc.com>"`, `OPERATOR_BCC="1"`.
+2. `sudo supervisorctl restart backend`
+3. Click Deploy in Emergent (CORS already pinned to preview + tokenforge.io).
 
 ## Prioritized Backlog
 

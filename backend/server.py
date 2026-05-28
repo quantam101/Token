@@ -1119,7 +1119,12 @@ async def share_og_image(slug: str):
     if not rec:
         # Render a neutral placeholder so social platforms don't show broken images
         png = _render_og_image("A TokenForge user", 0, 0.0, 0.0)
-        return Response(content=png, media_type="image/png", status_code=200)
+        return Response(
+            content=png,
+            media_type="image/png",
+            status_code=200,
+            headers={"Cache-Control": "public, max-age=60"},
+        )
 
     agg = await _aggregate_savings(rec["user_id"])
     lt = agg["lifetime"]
