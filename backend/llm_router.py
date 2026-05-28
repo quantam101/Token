@@ -20,42 +20,54 @@ from pydantic import BaseModel
 
 log = logging.getLogger("tokenforge.llm_router")
 
-# Lazy provider clients — module-level singletons.
+# Lazy provider clients — module-level singletons (use platform env keys).
 _openai_client = None
 _anthropic_client = None
 _gemini_client = None
 
 
+def _make_openai(api_key: str):
+    from openai import AsyncOpenAI
+    return AsyncOpenAI(api_key=api_key)
+
+
+def _make_anthropic(api_key: str):
+    from anthropic import AsyncAnthropic
+    return AsyncAnthropic(api_key=api_key)
+
+
+def _make_gemini(api_key: str):
+    from google import genai
+    return genai.Client(api_key=api_key)
+
+
 def _get_openai():
     global _openai_client
     if _openai_client is None:
-        from openai import AsyncOpenAI
         key = os.environ.get("OPENAI_API_KEY")
         if not key:
-            raise RuntimeError("OPENAI_API_KEY is not configured")
-        _openai_client = AsyncOpenAI(api_key=key)
+            raise RuntimeError("OPENAI_API_KEY is not configured on the platform")
+        _openai_client = _make_openai(key)
     return _openai_client
 
 
 def _get_anthropic():
     global _anthropic_client
     if _anthropic_client is None:
-        from anthropic import AsyncAnthropic
         key = os.environ.get("ANTHROPIC_API_KEY")
         if not key:
-            raise RuntimeError("ANTHROPIC_API_KEY is not configured")
-        _anthropic_client = AsyncAnthropic(api_key=key)
+            raise RuntimeError("ANTHROPIC_API_KEY is not configured on the platform")
+        _anthropic_client = _make_anthropic(key)
     return _anthropic_client
 
 
 def _get_gemini():
     global _gemini_client
     if _gemini_client is None:
-        from google import genai
         key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         if not key:
-            raise RuntimeError("GOOGLE_API_KEY (or GEMINI_API_KEY) is not configured")
-        _gemini_client = genai.Client(api_key=key)
+            raise RuntimeError("GOOGLE_API_KEY (or GEMINI_API_KEY) is not configured on the platform")
+        _gemini_client = _make_gemini(key)
     return _gemini_client
 
 
@@ -111,11 +123,19 @@ class LlmChat:
         api_key: Optional[str] = None,
         session_id: Optional[str] = None,
         system_message: Optional[str] = None,
+        byok_keys: Optional[dict] = None,
     ) -> None:
+        """
+        byok_keys: optional {"openai": "sk-...", "anthropic": "sk-ant-...",
+                             "google": "AIza..."} from the customer's stored
+                   BYOK vault. When present, the matching provider call uses
+                   the customer key instead of the platform env key.
+        """
         self.session_id = session_id
         self.system_message = system_message or "You are a helpful assistant."
         self._provider: Optional[str] = None
         self._model: Optional[str] = None
+        self._byok = byok_keys or {}
 
     def with_model(self, provider: str, model_name: str) -> "LlmChat":
         self._provider = (provider or "").lower()

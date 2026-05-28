@@ -30,6 +30,14 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 from llm_router import LlmChat, UserMessage
 from stripe_service import StripeCheckout, CheckoutSessionRequest
+from byok_service import (
+    SUPPORTED_PROVIDERS as BYOK_PROVIDERS,
+    BYOK_PLANS,
+    encrypt as byok_encrypt,
+    decrypt as byok_decrypt,
+    mask as byok_mask,
+    looks_valid as byok_looks_valid,
+)
 
 from optimizer import optimize, estimate_tokens, _embed, cosine, to_dict, TIER_MODEL_HINT
 from email_service import (
@@ -690,20 +698,50 @@ async def proxy_chat(body: ProxyIn, request: Request, auth=Depends(require_api_k
             provider = "algorithmic"
             model_used = "no-model"
         else:
-            # 4. Call LLM
+            # 4. Call LLM — gate by plan & BYOK
             session_id = f"{user['id']}:{uuid.uuid4()}"
+            req_provider = (body.provider or "").lower()
+            req_model = body.model
+            user_plan = (user.get("plan") or "free").lower()
+
+            byok_keys: dict = {}
+            if user_plan in BYOK_PLANS:
+                # Load this user's BYOK vault (decrypted in memory only).
+                docs = await db.byok_keys.find({"user_id": user["id"]}).to_list(length=10)
+                for d in docs:
+                    pt = byok_decrypt(d.get("encrypted_key", ""))
+                    if pt:
+                        byok_keys[d["provider"]] = pt
+
+            # Plan gating:
+            #   - free / starter: locked to platform Gemini 2.5 Flash (free tier).
+            #     Any other provider/model is silently rerouted so the user
+            #     still gets a response (and a hint via response.platform_note).
+            #   - pro / enterprise: full choice. If they have a BYOK key for the
+            #     requested provider, we use it; otherwise we use platform keys
+            #     (which include OpenAI/Anthropic only if the operator funded them).
+            platform_note = None
+            if user_plan not in BYOK_PLANS:
+                if req_provider not in ("google", "gemini") or not req_model.startswith("gemini"):
+                    platform_note = (
+                        "Free/Starter plan is limited to Gemini 2.5 Flash. "
+                        "Upgrade to Pro to unlock OpenAI, Anthropic, and BYO Keys."
+                    )
+                    req_provider = "google"
+                    req_model = "gemini-2.5-flash"
+
             try:
                 chat = LlmChat(
-                    api_key=EMERGENT_LLM_KEY,
                     session_id=session_id,
                     system_message=body.system or "You are a helpful assistant.",
-                ).with_model(body.provider, body.model)
+                    byok_keys=byok_keys,
+                ).with_model(req_provider, req_model)
                 msg = UserMessage(text=prompt_to_send)
                 response_text = await chat.send_message(msg)
                 if not isinstance(response_text, str):
                     response_text = str(response_text)
-                provider = body.provider
-                model_used = body.model
+                provider = req_provider
+                model_used = req_model
             except Exception as e:
                 log.exception("LLM call failed")
                 raise HTTPException(status_code=502, detail=f"LLM call failed: {e}")
@@ -765,7 +803,82 @@ async def proxy_chat(body: ProxyIn, request: Request, auth=Depends(require_api_k
         },
         "cost_saved_usd": cost_saved_usd,
         "pillars_applied": opt.pillars_applied if opt else [],
+        "platform_note": platform_note if not cache_hit else None,
     }
+
+
+# ------------------------------------------------------------------
+# BYOK — Bring Your Own LLM Keys (Pro+ feature)
+# ------------------------------------------------------------------
+class BYOKIn(BaseModel):
+    provider: str = Field(..., description="openai | anthropic | google")
+    api_key: str = Field(min_length=10, max_length=500)
+
+
+@api.get("/byok")
+async def list_byok_keys(user=Depends(current_user)):
+    """Return masked previews of the user's stored provider keys + plan gate flag."""
+    user_plan = (user.get("plan") or "free").lower()
+    docs = await db.byok_keys.find({"user_id": user["id"]}).to_list(length=10)
+    keys = []
+    for d in docs:
+        pt = byok_decrypt(d.get("encrypted_key", ""))
+        keys.append({
+            "provider": d["provider"],
+            "masked": byok_mask(pt or ""),
+            "created_at": d.get("created_at"),
+            "last_used_at": d.get("last_used_at"),
+        })
+    return {
+        "byok_unlocked": user_plan in BYOK_PLANS,
+        "plan": user_plan,
+        "supported_providers": list(BYOK_PROVIDERS),
+        "keys": keys,
+    }
+
+
+@api.post("/byok")
+async def upsert_byok_key(body: BYOKIn, user=Depends(current_user)):
+    user_plan = (user.get("plan") or "free").lower()
+    if user_plan not in BYOK_PLANS:
+        raise HTTPException(
+            status_code=402,
+            detail="BYO Keys is a Pro / Enterprise feature. Upgrade to unlock OpenAI, Anthropic, and Gemini key uploads.",
+        )
+    provider = body.provider.lower().strip()
+    if provider not in BYOK_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+    if not byok_looks_valid(provider, body.api_key):
+        raise HTTPException(
+            status_code=400,
+            detail=f"That key doesn't look like a valid {provider} key. Expected prefix: "
+                   + {"openai": "sk- / sk-proj-", "anthropic": "sk-ant-", "google": "AIza"}[provider],
+        )
+
+    encrypted = byok_encrypt(body.api_key)
+    await db.byok_keys.update_one(
+        {"user_id": user["id"], "provider": provider},
+        {
+            "$set": {
+                "user_id": user["id"],
+                "provider": provider,
+                "encrypted_key": encrypted,
+                "updated_at": _iso(),
+            },
+            "$setOnInsert": {"created_at": _iso(), "last_used_at": None},
+        },
+        upsert=True,
+    )
+    return {"provider": provider, "masked": byok_mask(body.api_key), "ok": True}
+
+
+@api.delete("/byok/{provider}")
+async def delete_byok_key(provider: str, user=Depends(current_user)):
+    provider = provider.lower().strip()
+    if provider not in BYOK_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported provider")
+    res = await db.byok_keys.delete_one({"user_id": user["id"], "provider": provider})
+    return {"deleted": res.deleted_count, "provider": provider}
 
 
 # ------------------------------------------------------------------

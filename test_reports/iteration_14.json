@@ -1,0 +1,35 @@
+{
+  "summary": "Iter-14 — BYOK feature + complete Emergent runtime separation. 100% pass on backend (11/11 pytest) and frontend (all UI selectors + flows verified for both admin and free user). emergentintegrations is NOT importable. Encryption-at-rest verified by direct Mongo inspection (Fernet 'gAAAAA' prefix, no raw 'AIza' or 'sk-' substring). Plan gating on /api/proxy/chat correctly downgrades free-tier requests for provider=openai model=gpt-4o to provider=google model=gemini-2.5-flash with platform_note mentioning 'Free/Starter' and 'Upgrade to Pro'. Admin enterprise users with stored BYOK Google key get real Gemini responses and platform_note=null. Regression spine (register→login→/auth/me→/keys→/proxy/chat→/dashboard/overview→/billing/checkout cs_live→/reports/savings.pdf magic bytes→/webhook/stripe bogus sig returns received:false) all 200/expected. Frontend: admin sees /dashboard/llm-keys with 3 provider cards (testids byok-card-openai/anthropic/google), no paywall, inputs enabled; free user sees byok-paywall + byok-upgrade-btn that navigates to /pricing, all inputs disabled. Nav has dash-nav-llm-keys link pointing to /dashboard/llm-keys. Pricing page shows 'BYO Keys — OpenAI, Anthropic, Gemini' (Pro) and 'BYO Keys — all providers' (Enterprise).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tokenforge_iter14_byok.py",
+    "/app/test_reports/pytest/pytest_iter14.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "byok_service.py — Fernet key derived from JWT_SECRET via SHA-256. Correctly noted in module docstring that rotating JWT_SECRET invalidates all stored BYOK keys (intentional safety property; documented).",
+    "server.py proxy_chat (lines 705-731) — plan gating correctly silently reroutes free/starter users to google/gemini-2.5-flash with platform_note. The downgrade keeps requested provider/model strings local to req_provider/req_model so the original body is not mutated for logging — clean.",
+    "BYOK keys are decrypted in-memory per request (lines 708-714) and only the dict of plaintext keys is passed to LlmChat. Not persisted, not logged. Good.",
+    "byok endpoints (lines 818-881) — POST returns masked preview on save, 402 for free users with clear upgrade copy, 400 with provider-specific expected-prefix hint on invalid key. DELETE returns {deleted, provider}. GET never leaks plaintext (only masked). All correct.",
+    "Suggested defense-in-depth (non-blocking): add unique compound index on db.byok_keys (user_id, provider) to make the upsert race-proof under high concurrency. Currently safe under typical load via the upsert filter, but a unique index would harden it.",
+    "server.py is now 1700+ lines — still growing. Recommend splitting BYOK + billing + reports into routers/ in a future refactor for maintainability (flagged but not blocking)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_tokenforge_iter14_byok.py (new — 11 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (all 11 UI assertions pass: pricing copy, nav link, 3 admin cards, admin-no-paywall, admin inputs enabled, free paywall, free upgrade btn, free inputs disabled, upgrade nav to /pricing, login flow, BYOK admin store/list flow)"},
+  "test_credentials": "admin@tokenforge.io / ForgeAdmin!2026 (enterprise plan). Ad-hoc free users registered as qa+byok_<rand>@alreadyherellc.com and qa+ui_<rand>@alreadyherellc.com / ForgeQA!2026.",
+  "seed_data_creation": "Inserted+deleted a BYOK Google key (AIzaSyCVAAmQUhhxCqtIm88w6U6u2cbzzZYn8oc) for admin user during tests. Test re-inserts it before the admin-real-Gemini chat test so /api/proxy/chat exercises the BYOK code path. No proxy_requests seeding needed — tests use real Gemini calls.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run iter-14 suite: `pytest /app/backend/tests/test_tokenforge_iter14_byok.py -v --junitxml=/app/test_reports/pytest/pytest_iterN.xml`. Tests are self-contained (each registers its own free user; cleans up nothing in Mongo). Note: rate limit on /auth/register is 8 per 600s per IP — running iter-13+iter-14 back-to-back can hit 429. To verify BYOK encryption-at-rest, the test imports MONGO_URL/DB_NAME from env and queries db.byok_keys directly; relies on backend & test runner sharing the same Mongo instance (true in the in-container preview env). For frontend, LLM Keys page is at /dashboard/llm-keys. Required testids confirmed: byok-paywall, byok-upgrade-btn, byok-card-openai, byok-card-anthropic, byok-card-google, dash-nav-llm-keys.",
+  "rca_of_the_issue": "N/A — no bugs found this iteration. All BYOK paywall, validation, encryption-at-rest, plan-gating on /proxy/chat, frontend testids, nav, and pricing copy work as specified. emergentintegrations is confirmed uninstalled and not importable; direct SDK paths (openai/anthropic/google-genai) are wired through llm_router with per-call byok_keys override."
+}

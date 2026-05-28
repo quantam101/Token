@@ -6,10 +6,11 @@ import { MarketingNav, Footer } from "@/components/Nav";
 import { toast } from "sonner";
 
 const FEATURES = {
-  free: ["50K tokens / month", "All 5 distillation pillars", "1 API key", "Community support"],
-  starter: ["1M tokens / month", "All 5 distillation pillars", "5 API keys", "Email support", "Dashboard analytics"],
+  free: ["50K tokens / month", "Gemini 2.5 Flash only", "1 API key", "Community support"],
+  starter: ["1M tokens / month", "Gemini 2.5 Flash only", "5 API keys", "Email support", "Dashboard analytics"],
   pro: [
     "10M tokens / month",
+    "BYO Keys — OpenAI, Anthropic, Gemini",
     "All 5 distillation pillars",
     "Unlimited API keys",
     "Priority support",
@@ -18,6 +19,7 @@ const FEATURES = {
   ],
   enterprise: [
     "100M tokens / month",
+    "BYO Keys — all providers",
     "Dedicated routing layer",
     "SSO / SAML",
     "99.99% SLA",

@@ -10,6 +10,7 @@ import Pricing from "@/pages/Pricing";
 import Playground from "@/pages/Playground";
 import Dashboard from "@/pages/Dashboard";
 import Keys from "@/pages/Keys";
+import LlmKeys from "@/pages/LlmKeys";
 import Logs from "@/pages/Logs";
 import Billing, { BillingSuccess } from "@/pages/Billing";
 import Docs from "@/pages/Docs";
@@ -45,6 +46,7 @@ function App() {
           <Route path="/share/:slug" element={<Share />} />
           <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
           <Route path="/dashboard/keys" element={<Protected><Keys /></Protected>} />
+          <Route path="/dashboard/llm-keys" element={<Protected><LlmKeys /></Protected>} />
           <Route path="/dashboard/logs" element={<Protected><Logs /></Protected>} />
           <Route path="/dashboard/billing" element={<Protected><Billing /></Protected>} />
           <Route path="/billing/success" element={<Protected><BillingSuccess /></Protected>} />

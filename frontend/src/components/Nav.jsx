@@ -67,6 +67,7 @@ export function DashboardNav() {
           <nav className="hidden md:flex items-center gap-1">
             {link("/dashboard", "Overview", "dash-nav-overview")}
             {link("/dashboard/keys", "API Keys", "dash-nav-keys")}
+            {link("/dashboard/llm-keys", "LLM Keys", "dash-nav-llm-keys")}
             {link("/dashboard/logs", "Logs", "dash-nav-logs")}
             {link("/playground", "Playground", "dash-nav-playground")}
             {link("/dashboard/billing", "Billing", "dash-nav-billing")}
