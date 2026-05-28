@@ -31,7 +31,7 @@ export default function Admin() {
           <div className="mt-8 text-[rgb(var(--tf-error))] font-mono">Access denied.</div>
         ) : (
           <>
-            <div className="mt-6 grid grid-cols-2 lg:grid-cols-6 gap-px bg-[rgb(var(--tf-border))] border border-[rgb(var(--tf-border))]" data-testid="admin-kpis">
+            <div className="mt-6 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-px bg-[rgb(var(--tf-border))] border border-[rgb(var(--tf-border))]" data-testid="admin-kpis">
               <Kpi label="Users" value={data.users} />
               <Kpi label="Waitlist" value={data.waitlist} />
               <Kpi label="Requests" value={data.requests} />
