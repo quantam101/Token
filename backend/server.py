@@ -881,6 +881,62 @@ async def delete_byok_key(provider: str, user=Depends(current_user)):
     return {"deleted": res.deleted_count, "provider": provider}
 
 
+# Default 1-token "ping" models per provider — picked for the cheapest path
+_BYOK_TEST_MODELS = {
+    "openai": "gpt-4o-mini",
+    "anthropic": "claude-haiku-4-5",
+    "google": "gemini-2.5-flash",
+}
+
+
+@api.post("/byok/{provider}/test")
+async def test_byok_key(provider: str, user=Depends(current_user)):
+    """Fire a minimal 1-token request using the user's stored BYOK key.
+    Returns latency + model name on success, or a friendly error string on
+    failure (insufficient quota, invalid key, etc.). Pro+ only."""
+    user_plan = (user.get("plan") or "free").lower()
+    if user_plan not in BYOK_PLANS:
+        raise HTTPException(status_code=402, detail="BYO Keys is a Pro / Enterprise feature.")
+    provider = provider.lower().strip()
+    if provider not in BYOK_PROVIDERS:
+        raise HTTPException(status_code=400, detail="Unsupported provider")
+    doc = await db.byok_keys.find_one({"user_id": user["id"], "provider": provider})
+    if not doc:
+        raise HTTPException(status_code=404, detail=f"No {provider} key stored")
+    plaintext = byok_decrypt(doc.get("encrypted_key", ""))
+    if not plaintext:
+        raise HTTPException(status_code=500, detail="Stored key could not be decrypted")
+
+    model = _BYOK_TEST_MODELS[provider]
+    import time
+    t0 = time.time()
+    try:
+        chat = LlmChat(
+            session_id=f"byok-test:{user['id']}",
+            system_message="Reply with just OK.",
+            byok_keys={provider: plaintext},
+        ).with_model(provider, model)
+        await chat.send_message(UserMessage(text="ping"))
+        latency_ms = int((time.time() - t0) * 1000)
+        await db.byok_keys.update_one(
+            {"user_id": user["id"], "provider": provider},
+            {"$set": {"last_used_at": _iso()}},
+        )
+        return {"ok": True, "provider": provider, "model": model, "latency_ms": latency_ms}
+    except Exception as e:  # noqa: BLE001 — we want to surface whatever the SDK throws
+        # Map common provider error shapes to a short, customer-friendly string
+        msg = str(e)
+        if "insufficient_quota" in msg or "billing" in msg.lower():
+            friendly = "Key is valid but your provider account is out of credits."
+        elif "401" in msg or "unauthorized" in msg.lower() or "invalid_api_key" in msg.lower():
+            friendly = "Key was rejected by the provider — likely invalid or revoked."
+        elif "429" in msg or "rate" in msg.lower():
+            friendly = "Provider rate limit hit. Try again in a moment."
+        else:
+            friendly = msg[:200]
+        return {"ok": False, "provider": provider, "model": model, "error": friendly}
+
+
 # ------------------------------------------------------------------
 # Dashboard analytics
 # ------------------------------------------------------------------

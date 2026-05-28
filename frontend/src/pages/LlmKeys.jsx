@@ -36,6 +36,8 @@ export default function LlmKeys() {
   });
   const [drafts, setDrafts] = useState({ openai: "", anthropic: "", google: "" });
   const [saving, setSaving] = useState({});
+  const [testing, setTesting] = useState({});
+  const [testResults, setTestResults] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,10 +78,29 @@ export default function LlmKeys() {
     if (!window.confirm(`Remove your ${PROVIDER_META[provider].label} key? Calls using it will fall back to TokenForge's default model.`)) return;
     try {
       await client.delete(`/byok/${provider}`);
+      setTestResults((r) => ({ ...r, [provider]: null }));
       await load();
       toast.success("Key removed");
     } catch (e) {
       toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Delete failed");
+    }
+  };
+
+  const test = async (provider) => {
+    setTesting((t) => ({ ...t, [provider]: true }));
+    setTestResults((r) => ({ ...r, [provider]: null }));
+    try {
+      const { data } = await client.post(`/byok/${provider}/test`);
+      setTestResults((r) => ({ ...r, [provider]: data }));
+      if (data.ok) {
+        toast.success(`${PROVIDER_META[provider].label} key is live — ${data.latency_ms}ms`);
+      } else {
+        toast.error(`${PROVIDER_META[provider].label}: ${data.error}`);
+      }
+    } catch (e) {
+      toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Test failed");
+    } finally {
+      setTesting((t) => ({ ...t, [provider]: false }));
     }
   };
 
@@ -177,11 +198,37 @@ export default function LlmKeys() {
                 </div>
 
                 {existing ? (
-                  <div className="mt-4 font-mono text-sm text-[rgb(var(--tf-text-2))]">
-                    Stored key: <span className="text-white">{existing.masked}</span>
-                    <span className="text-[rgb(var(--tf-text-muted))] ml-3">
-                      added {new Date(existing.created_at).toLocaleDateString()}
-                    </span>
+                  <div className="mt-4 space-y-3">
+                    <div className="font-mono text-sm text-[rgb(var(--tf-text-2))]">
+                      Stored key: <span className="text-white">{existing.masked}</span>
+                      <span className="text-[rgb(var(--tf-text-muted))] ml-3">
+                        added {new Date(existing.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <button
+                        onClick={() => test(provider)}
+                        disabled={testing[provider]}
+                        data-testid={`byok-test-${provider}`}
+                        className="text-xs font-mono uppercase tracking-widest border border-[rgb(var(--tf-border-2))] hover:border-[rgb(var(--tf-matrix))] hover:text-[rgb(var(--tf-matrix))] px-3 py-1.5 rounded-md transition-colors disabled:opacity-40"
+                      >
+                        {testing[provider] ? "Pinging…" : "Test key"}
+                      </button>
+                      {testResults[provider] && (
+                        <span
+                          data-testid={`byok-test-result-${provider}`}
+                          className={`text-xs font-mono ${
+                            testResults[provider].ok
+                              ? "text-[rgb(var(--tf-matrix))]"
+                              : "text-red-400"
+                          }`}
+                        >
+                          {testResults[provider].ok
+                            ? `✓ ${testResults[provider].model} · ${testResults[provider].latency_ms}ms`
+                            : `✗ ${testResults[provider].error}`}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <form
