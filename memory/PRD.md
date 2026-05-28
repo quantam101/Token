@@ -90,12 +90,21 @@ After that:
 2. `sudo supervisorctl restart backend`
 3. Click Deploy in Emergent (CORS already pinned to preview + tokenforge.io).
 
+### Iter-13 — Resend domain verified + email delivery LIVE
+- **Domain `alreadyherellc.com` verified at Resend** (GoDaddy DNS) → `SENDER_EMAIL` flipped to `TokenForge <dispatch@alreadyherellc.com>`, `OPERATOR_BCC=1` enabled in `/app/backend/.env`.
+- **Milestone celebration flow verified end-to-end**: $1/$20/$100/$1000 thresholds correctly insert `milestone_alerts` row, auto-create public share link, and dispatch milestone email — all idempotent under repeated requests.
+- **Known constraint**: Resend API key currently appears to be a TEST key. Sends to recipients ON the verified domain (`@alreadyherellc.com`) deliver; sends to arbitrary external recipients (`@gmail.com`, `@example.com`) still log `resend.send rejected (sandbox)`. To unlock universal delivery, rotate `RESEND_API_KEY` to a LIVE/full-access key from resend.com/api-keys.
+
+### Test posture (cont.)
+- iter-13: **11/11 backend ✓** (email delivery + milestone flywheel re-verification)
+
 ## Prioritized Backlog
 
 ### P0 — Pre-launch hardening
-- [ ] Pin CORS `allow_origins` to explicit production origin (currently `*`)
+- [x] Verify `alreadyherellc.com` domain in Resend (DONE — iter-13)
+- [x] Pin CORS `allow_origins` to explicit production origins (DONE — iter-11)
+- [ ] Rotate `RESEND_API_KEY` to a LIVE/full-access key to unlock delivery to ANY recipient (current key is test-mode — only delivers to verified-domain recipients)
 - [ ] Migrate rate-limit buckets to Redis once we scale beyond uvicorn single-worker
-- [ ] Verify `alreadyherellc.com` domain in Resend → flip `SENDER_EMAIL` to `dispatch@alreadyherellc.com` and `OPERATOR_BCC=1`
 
 ### P1 — Revenue + retention
 - [ ] Cron job to auto-email monthly ROI report on the 1st of each month
