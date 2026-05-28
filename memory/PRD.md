@@ -93,20 +93,28 @@ After that:
 ### Iter-13 — Resend domain verified + email delivery LIVE
 - **Domain `alreadyherellc.com` verified at Resend** (GoDaddy DNS) → `SENDER_EMAIL` flipped to `TokenForge <dispatch@alreadyherellc.com>`, `OPERATOR_BCC=1` enabled in `/app/backend/.env`.
 - **Milestone celebration flow verified end-to-end**: $1/$20/$100/$1000 thresholds correctly insert `milestone_alerts` row, auto-create public share link, and dispatch milestone email — all idempotent under repeated requests.
-- **Known constraint**: Resend API key currently appears to be a TEST key. Sends to recipients ON the verified domain (`@alreadyherellc.com`) deliver; sends to arbitrary external recipients (`@gmail.com`, `@example.com`) still log `resend.send rejected (sandbox)`. To unlock universal delivery, rotate `RESEND_API_KEY` to a LIVE/full-access key from resend.com/api-keys.
 
 ### Test posture (cont.)
 - iter-13: **11/11 backend ✓** (email delivery + milestone flywheel re-verification)
 
-### Iter-14 — Zero-Emergent-runtime migration (LLM + Stripe direct SDKs) ✅
-- **Removed `emergentintegrations` from server.py imports.** Two new drop-in modules: `/app/backend/llm_router.py` (OpenAI / Anthropic / Google Gemini direct SDKs) and `/app/backend/stripe_service.py` (official Stripe Python SDK).
-- **Stripe LIVE mode**: `STRIPE_API_KEY=sk_live_...` confirmed via real `cs_live_...` checkout session creation (no more `integrations.emergentagent.com/stripe/...` calls).
-- **LLM direct routing**: Gemini 2.5 Flash verified end-to-end through new router (returned "PONG"). Semantic cache still works (second call returned `cache_hit: true`).
-- **Outstanding (NOT code issues)**: OpenAI key has `insufficient_quota` (user must fund billing at platform.openai.com); Anthropic key empty (user provided strings were not in `sk-ant-api03-...` format); `STRIPE_WEBHOOK_SECRET` empty until user configures endpoint at dashboard.stripe.com/webhooks → payment flow falls back to polling-only (which already works).
-- **TokenForge now has zero Emergent runtime dependency.** Can be deployed anywhere; all third-party calls (Stripe, OpenAI, Anthropic, Google, Resend, MongoDB) use the customer's own keys.
+### Iter-14a — Direct-SDK migration (LLM + Stripe LIVE)
+- **Removed `emergentintegrations` from server.py imports.** New `/app/backend/llm_router.py` (OpenAI/Anthropic/Google Gemini direct SDKs) + `/app/backend/stripe_service.py` (official Stripe Python SDK).
+- **Stripe LIVE**: `STRIPE_API_KEY=sk_live_...` verified via real `cs_live_...` checkout creation. Webhook signing secret `whsec_...` installed and verified.
+- **Gemini direct routing** end-to-end verified ("PONG" response, semantic cache hits).
+
+### Iter-14b — BYOK feature + 100% Emergent runtime separation ✅
+- **`emergentintegrations` uninstalled** (`pip uninstall` + removed from requirements.txt). Backend imports zero Emergent code.
+- **BYOK (Bring Your Own Keys)** as Pro+ upsell:
+  - New `/app/backend/byok_service.py` — Fernet (AES-128-CBC + HMAC) encryption derived from JWT_SECRET. Keys decrypted in-memory per request only.
+  - 3 endpoints: `GET /api/byok` (list, masked), `POST /api/byok` (upsert, 402 paywall for free/starter), `DELETE /api/byok/{provider}`.
+  - Free/Starter plans **paywalled at HTTP 402** — `/api/proxy/chat` silently routes them to platform Gemini 2.5 Flash with a `platform_note` upsell hint.
+  - Pro/Enterprise plans get full provider choice + their own stored keys (zero LLM cost to TokenForge at any scale).
+  - New `/app/frontend/src/pages/LlmKeys.jsx` page at `/dashboard/llm-keys` — paywall banner for free users, 3 provider cards for Pro+, input/save/remove with masked display.
+  - Pricing page updated with "BYO Keys" line on Pro & Enterprise tiers.
+- **Encryption verified at rest**: direct Mongo inspection in tests confirms `gAAAAA` Fernet prefix, no raw key substring leakage.
 
 ### Test posture (cont.)
-- iter-14: 3/3 smoke verified (Gemini text, cache hit, Stripe live checkout)
+- iter-14: **22/22 ✓** (11 backend pytest + 11 frontend UI assertions); encryption-at-rest verified; full regression spine clean.
 
 ## Prioritized Backlog
 
