@@ -109,6 +109,21 @@ export default function Dashboard() {
     }
   };
 
+  const [referral, setReferral] = useState(null);
+  useEffect(() => {
+    client.get("/referrals/me").then(({ data }) => setReferral(data)).catch(() => {});
+  }, []);
+  const copyReferral = async () => {
+    if (!referral) return;
+    const url = `${window.location.origin}/register?ref=${referral.code}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Referral link copied — +500K tokens for both sides on signup");
+    } catch {
+      toast.error("Copy failed");
+    }
+  };
+
   const usage = user?.usage || { tokens_used: 0, monthly_quota: 50000, percent_used: 0 };
   const pct = Math.min(100, usage.percent_used || 0);
   const showWarn = pct >= 80 && pct < 100;
@@ -215,6 +230,35 @@ export default function Dashboard() {
             />
           </div>
         </div>
+
+        {/* Referral card */}
+        {referral && (
+          <div
+            data-testid="referral-card"
+            className="mb-6 border border-[rgb(var(--tf-border))] bg-[rgb(var(--tf-bg-2))] p-5 flex items-center justify-between flex-wrap gap-3"
+          >
+            <div>
+              <div className="text-xs font-mono uppercase tracking-widest text-[rgb(var(--tf-success))]">
+                REFER A DEV · +500K TOKENS EACH
+              </div>
+              <div className="text-sm text-[rgb(var(--tf-text-2))] mt-1">
+                Every developer who signs up via your link gives you both 500,000 bonus tokens this month.
+                {referral.referrals_count > 0 && (
+                  <span className="ml-2 text-[rgb(var(--tf-success))]">
+                    {referral.referrals_count} referral{referral.referrals_count === 1 ? "" : "s"} so far · +{(referral.referrals_count * 500_000).toLocaleString()} tk earned
+                  </span>
+                )}
+              </div>
+            </div>
+            <button
+              data-testid="copy-referral-btn"
+              onClick={copyReferral}
+              className="bg-[rgb(var(--tf-brand))] hover:bg-[rgb(var(--tf-brand-hover))] text-black font-medium px-4 py-2 rounded-md text-sm transition-colors"
+            >
+              Copy referral link →
+            </button>
+          </div>
+        )}
 
         {/* KPI Grid */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-[rgb(var(--tf-border))] border border-[rgb(var(--tf-border))]" data-testid="kpi-grid">

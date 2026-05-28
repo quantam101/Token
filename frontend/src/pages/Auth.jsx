@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import { MarketingNav, Footer } from "@/components/Nav";
 import { toast } from "sonner";
@@ -73,6 +73,8 @@ export function Login() {
 export function Register() {
   const { register } = useAuth();
   const nav = useNavigate();
+  const [searchParams] = useSearchParams();
+  const ref = searchParams.get("ref") || "";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
@@ -83,9 +85,10 @@ export function Register() {
     e.preventDefault();
     setBusy(true);
     setErr("");
-    const r = await register(email, password, name);
+    const r = await register(email, password, name, ref);
     if (r.ok) {
-      toast.success("Account created — your API key is ready.");
+      if (ref) toast.success("Account + 500K bonus tokens unlocked from referral.");
+      else toast.success("Account created — your API key is ready.");
       nav("/dashboard");
     } else {
       setErr(r.error);
@@ -94,7 +97,16 @@ export function Register() {
   };
 
   return (
-    <AuthShell title="Create account" subtitle="50,000 free tokens/month. No card required.">
+    <AuthShell
+      title="Create account"
+      subtitle={ref ? "Referral applied — you'll get +500K bonus tokens this month." : "50,000 free tokens/month. No card required."}
+    >
+      {ref && (
+        <div data-testid="referral-banner" className="mb-4 border border-[rgb(var(--tf-success))] bg-[rgba(0,230,118,0.08)] rounded-md p-3 text-sm">
+          <span className="font-mono text-xs uppercase tracking-widest text-[rgb(var(--tf-success))]">REFERRAL BONUS</span>
+          <span className="ml-2 text-[rgb(var(--tf-text-2))]">+500,000 tokens unlocked on signup.</span>
+        </div>
+      )}
       <form onSubmit={submit} className="space-y-4" data-testid="register-form">
         <Field label="Name">
           <input data-testid="register-name" value={name} onChange={(e) => setName(e.target.value)} className="tf-input" />

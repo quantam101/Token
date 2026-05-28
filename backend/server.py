@@ -89,7 +89,7 @@ api = APIRouter(prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -157,6 +157,7 @@ class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6, max_length=200)
     name: Optional[str] = None
+    ref: Optional[str] = None  # referrer's user id
 
 
 class LoginIn(BaseModel):
@@ -380,6 +381,30 @@ async def register(body: RegisterIn, request: Request):
         "last_used_at": None,
     }
     await db.api_keys.insert_one(default_key)
+
+    # Referral bonus — +500K tokens to both sides if valid referrer
+    if body.ref:
+        referrer = await db.users.find_one({"id": body.ref}, {"_id": 0, "password_hash": 0})
+        if referrer and referrer["id"] != uid:
+            await db.users.update_one(
+                {"id": uid},
+                {"$inc": {"monthly_quota": REFERRAL_BONUS_TOKENS}},
+            )
+            await db.users.update_one(
+                {"id": referrer["id"]},
+                {"$inc": {"monthly_quota": REFERRAL_BONUS_TOKENS}},
+            )
+            await db.referrals.insert_one(
+                {
+                    "id": str(uuid.uuid4()),
+                    "referrer_id": referrer["id"],
+                    "referee_id": uid,
+                    "bonus_each": REFERRAL_BONUS_TOKENS,
+                    "created_at": _iso(),
+                }
+            )
+            doc["monthly_quota"] += REFERRAL_BONUS_TOKENS
+
     token = make_token(uid, email)
     # Fire welcome email (best-effort, non-blocking failure)
     origin = (
@@ -993,8 +1018,6 @@ async def get_share_data(slug: str):
         raise HTTPException(status_code=404, detail="Share link not found")
     agg = await _aggregate_savings(rec["user_id"])
     lt = agg["lifetime"]
-    # Cap displayed compression at 100% — cache hits inflate `saved` above `original` since
-    # we credit completion tokens too, which is correct for $-saved but misleading as a %.
     avg_pct = 0.0
     if lt.get("original"):
         avg_pct = min(100.0, round((lt["saved"] / lt["original"]) * 100.0, 2))
@@ -1005,6 +1028,159 @@ async def get_share_data(slug: str):
         "cost_saved_usd": round(float(lt.get("cost_saved", 0.0)), 4),
         "requests": int(lt.get("requests", 0)),
         "avg_compression_pct": avg_pct,
+    }
+
+
+# ------------------------------------------------------------------
+# Open Graph image — 1200x630 PNG for social previews
+# ------------------------------------------------------------------
+def _render_og_image(display_name: str, tokens_saved: int, cost_saved: float, avg_pct: float) -> bytes:
+    """Render a 1200x630 PNG savings receipt with Pillow."""
+    from io import BytesIO
+    from PIL import Image, ImageDraw, ImageFont
+
+    W, H = 1200, 630
+    img = Image.new("RGB", (W, H), color=(10, 10, 10))
+    draw = ImageDraw.Draw(img)
+
+    # Subtle radial-ish glow at top
+    for i, alpha in enumerate(range(60, 0, -2)):
+        draw.ellipse(
+            (W // 2 - 800, -700 + i * 6, W // 2 + 800, 0 + i * 6),
+            fill=(28, 14, 4),
+        )
+
+    def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+        candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+            if bold
+            else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf"
+            if bold
+            else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        ]
+        for c in candidates:
+            try:
+                return ImageFont.truetype(c, size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    M = 70  # margin
+
+    # Header: brand mark
+    draw.rectangle((M, M, M + 56, M + 56), fill=(255, 69, 0))
+    draw.text((M + 14, M + 8), "TF", fill=(10, 10, 10), font=font(28, True))
+    draw.text((M + 76, M + 6), "TokenForge", fill=(250, 250, 250), font=font(32, True))
+    draw.text((M + 76, M + 38), "ROI receipt", fill=(161, 161, 170), font=font(16))
+
+    # Right top: display name badge
+    name_text = (display_name or "Customer")[:28]
+    tw = draw.textlength(name_text, font=font(18))
+    draw.rectangle((W - M - tw - 36, M + 8, W - M, M + 48), outline=(63, 63, 70), width=1)
+    draw.text((W - M - tw - 18, M + 17), name_text, fill=(161, 161, 170), font=font(18))
+
+    # Hero number
+    y = 210
+    draw.text((M, y), "Saved", fill=(161, 161, 170), font=font(24))
+    big = f"{tokens_saved:,}"
+    draw.text((M, y + 30), big, fill=(0, 230, 118), font=font(160, True))
+    big_w = draw.textlength(big, font=font(160, True))
+    draw.text((M + big_w + 16, y + 130), "tokens", fill=(161, 161, 170), font=font(28))
+
+    # Stat row
+    row_y = H - 200
+    # $ saved card
+    draw.rectangle((M, row_y, M + 340, row_y + 110), outline=(39, 39, 42), width=2)
+    draw.text((M + 20, row_y + 18), "$ SAVED", fill=(113, 113, 122), font=font(15, True))
+    draw.text((M + 20, row_y + 42), f"${cost_saved:.4f}", fill=(255, 69, 0), font=font(40, True))
+    # Avg compression card
+    draw.rectangle((M + 360, row_y, M + 700, row_y + 110), outline=(39, 39, 42), width=2)
+    draw.text((M + 380, row_y + 18), "AVG COMPRESSION", fill=(113, 113, 122), font=font(15, True))
+    draw.text((M + 380, row_y + 42), f"{avg_pct:.1f}%", fill=(250, 250, 250), font=font(40, True))
+
+    # CTA strip
+    cta_y = H - 70
+    draw.text((M, cta_y), "tokenforge.io  /  distill or perish", fill=(113, 113, 122), font=font(20))
+    cta_text = "Start saving — free →"
+    ctw = draw.textlength(cta_text, font=font(20, True))
+    draw.rectangle((W - M - ctw - 36, cta_y - 10, W - M, cta_y + 30), fill=(255, 69, 0))
+    draw.text((W - M - ctw - 18, cta_y - 2), cta_text, fill=(10, 10, 10), font=font(20, True))
+
+    buf = BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+@api.get("/share/savings/{slug}/og.png")
+async def share_og_image(slug: str):
+    """Return a 1200x630 OG/Twitter card preview for the share link."""
+    rec = await db.share_links.find_one({"slug": slug}, {"_id": 0})
+    if not rec:
+        # Render a neutral placeholder so social platforms don't show broken images
+        png = _render_og_image("A TokenForge user", 0, 0.0, 0.0)
+        return Response(content=png, media_type="image/png", status_code=200)
+
+    agg = await _aggregate_savings(rec["user_id"])
+    lt = agg["lifetime"]
+    avg_pct = 0.0
+    if lt.get("original"):
+        avg_pct = min(100.0, round((lt["saved"] / lt["original"]) * 100.0, 2))
+    png = _render_og_image(
+        rec.get("display_name") or "A TokenForge user",
+        int(lt.get("saved", 0)),
+        round(float(lt.get("cost_saved", 0.0)), 4),
+        avg_pct,
+    )
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+# ------------------------------------------------------------------
+# Public showcase — "Used by" leaderboard / strip
+# ------------------------------------------------------------------
+@api.get("/showcase/savings")
+async def showcase_savings(limit: int = 12):
+    """Return top public share-links sorted by lifetime $ saved.
+    Strictly limited to users who explicitly opted in by creating a share link
+    (so this is opt-in social proof, not a privacy leak)."""
+    docs = await db.share_links.find({}, {"_id": 0}).limit(200).to_list(200)
+    rows = []
+    for d in docs:
+        agg = await _aggregate_savings(d["user_id"])
+        lt = agg["lifetime"]
+        saved = int(lt.get("saved", 0))
+        if saved <= 0:
+            continue
+        rows.append(
+            {
+                "slug": d["slug"],
+                "display_name": d.get("display_name") or "A TokenForge customer",
+                "tokens_saved": saved,
+                "cost_saved_usd": round(float(lt.get("cost_saved", 0.0)), 4),
+            }
+        )
+    rows.sort(key=lambda r: r["cost_saved_usd"], reverse=True)
+    return {"customers": rows[:limit]}
+
+
+# ------------------------------------------------------------------
+# Referral program — +500K bonus tokens to both sides on signup
+# ------------------------------------------------------------------
+REFERRAL_BONUS_TOKENS = 500_000
+
+
+@api.get("/referrals/me")
+async def my_referral(user=Depends(current_user)):
+    """Current user's referral code (== their UUID) + lifetime stats."""
+    count = await db.referrals.count_documents({"referrer_id": user["id"]})
+    return {
+        "code": user["id"],
+        "referrals_count": count,
+        "bonus_per_referral": REFERRAL_BONUS_TOKENS,
     }
 
 
@@ -1411,6 +1587,8 @@ async def startup():
     await db.share_links.create_index("slug", unique=True)
     await db.share_links.create_index("user_id")
     await db.email_alerts.create_index("key", unique=True)
+    await db.referrals.create_index("referrer_id")
+    await db.referrals.create_index("referee_id", unique=True)
     # Seed admin
     existing = await db.users.find_one({"email": ADMIN_EMAIL.lower()})
     if not existing:

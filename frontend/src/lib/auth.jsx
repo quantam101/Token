@@ -40,9 +40,11 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  const register = useCallback(async (email, password, name) => {
+  const register = useCallback(async (email, password, name, ref) => {
     try {
-      const { data } = await client.post("/auth/register", { email, password, name });
+      const payload = { email, password, name };
+      if (ref) payload.ref = ref;
+      const { data } = await client.post("/auth/register", payload);
       setToken(data.token);
       setUser(data.user);
       return { ok: true };

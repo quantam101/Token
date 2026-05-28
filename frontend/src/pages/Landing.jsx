@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import client, { formatApiErrorDetail } from "@/lib/api";
 import { MarketingNav, Footer } from "@/components/Nav";
+import UsedByStrip from "@/components/UsedByStrip";
 import { toast } from "sonner";
 
 const HERO_BG =
@@ -195,6 +196,9 @@ export default function Landing() {
           </div>
         </div>
       </section>
+
+      {/* USED-BY STRIP */}
+      <UsedByStrip />
 
       {/* LIVE CALCULATOR */}
       <section id="calculator" className="relative" data-testid="calculator-section">

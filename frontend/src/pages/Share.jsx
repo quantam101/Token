@@ -18,6 +18,43 @@ export default function Share() {
       .catch((e) => setErr(e.response?.status === 404 ? "Link not found" : "Failed to load"));
   }, [slug]);
 
+  // Inject OG / Twitter meta tags so paste-to-LinkedIn/Slack/X renders the savings card.
+  useEffect(() => {
+    if (!data) return;
+    const ogImg = `${BACKEND_URL}/api/share/savings/${slug}/og.png`;
+    const url = window.location.href;
+    const title = `${data.display_name} saved ${data.tokens_saved.toLocaleString()} tokens with TokenForge`;
+    const desc = `$${data.cost_saved_usd} saved · ${data.avg_compression_pct}% average prompt compression · ${data.requests.toLocaleString()} requests optimized.`;
+    const tags = [
+      ["property", "og:type", "website"],
+      ["property", "og:title", title],
+      ["property", "og:description", desc],
+      ["property", "og:image", ogImg],
+      ["property", "og:url", url],
+      ["name", "twitter:card", "summary_large_image"],
+      ["name", "twitter:title", title],
+      ["name", "twitter:description", desc],
+      ["name", "twitter:image", ogImg],
+    ];
+    const created = [];
+    tags.forEach(([attr, key, value]) => {
+      let el = document.querySelector(`meta[${attr}="${key}"]`);
+      if (!el) {
+        el = document.createElement("meta");
+        el.setAttribute(attr, key);
+        document.head.appendChild(el);
+        created.push(el);
+      }
+      el.setAttribute("content", value);
+    });
+    const prevTitle = document.title;
+    document.title = title;
+    return () => {
+      created.forEach((el) => el.parentNode?.removeChild(el));
+      document.title = prevTitle;
+    };
+  }, [data, slug]);
+
   const tweet = () => {
     if (!data) return;
     const msg = `I've saved ${data.tokens_saved.toLocaleString()} tokens ($${data.cost_saved_usd}) on LLM costs with @TokenForge_io — averaging ${data.avg_compression_pct}% prompt compression. ${window.location.href}`;
