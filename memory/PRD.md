@@ -98,6 +98,16 @@ After that:
 ### Test posture (cont.)
 - iter-13: **11/11 backend ✓** (email delivery + milestone flywheel re-verification)
 
+### Iter-14 — Zero-Emergent-runtime migration (LLM + Stripe direct SDKs) ✅
+- **Removed `emergentintegrations` from server.py imports.** Two new drop-in modules: `/app/backend/llm_router.py` (OpenAI / Anthropic / Google Gemini direct SDKs) and `/app/backend/stripe_service.py` (official Stripe Python SDK).
+- **Stripe LIVE mode**: `STRIPE_API_KEY=sk_live_...` confirmed via real `cs_live_...` checkout session creation (no more `integrations.emergentagent.com/stripe/...` calls).
+- **LLM direct routing**: Gemini 2.5 Flash verified end-to-end through new router (returned "PONG"). Semantic cache still works (second call returned `cache_hit: true`).
+- **Outstanding (NOT code issues)**: OpenAI key has `insufficient_quota` (user must fund billing at platform.openai.com); Anthropic key empty (user provided strings were not in `sk-ant-api03-...` format); `STRIPE_WEBHOOK_SECRET` empty until user configures endpoint at dashboard.stripe.com/webhooks → payment flow falls back to polling-only (which already works).
+- **TokenForge now has zero Emergent runtime dependency.** Can be deployed anywhere; all third-party calls (Stripe, OpenAI, Anthropic, Google, Resend, MongoDB) use the customer's own keys.
+
+### Test posture (cont.)
+- iter-14: 3/3 smoke verified (Gemini text, cache hit, Stripe live checkout)
+
 ## Prioritized Backlog
 
 ### P0 — Pre-launch hardening

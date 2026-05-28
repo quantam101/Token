@@ -28,11 +28,8 @@ from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depend
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
-from emergentintegrations.llm.chat import LlmChat, UserMessage
-from emergentintegrations.payments.stripe.checkout import (
-    StripeCheckout,
-    CheckoutSessionRequest,
-)
+from llm_router import LlmChat, UserMessage
+from stripe_service import StripeCheckout, CheckoutSessionRequest
 
 from optimizer import optimize, estimate_tokens, _embed, cosine, to_dict, TIER_MODEL_HINT
 from email_service import (
@@ -50,7 +47,7 @@ from email_service import (
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = "HS256"
 ACCESS_TTL_MIN = 60 * 24  # 24h
-EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
+EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")  # legacy; no longer used at runtime
 STRIPE_API_KEY = os.environ["STRIPE_API_KEY"]
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@tokenforge.io")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin")
