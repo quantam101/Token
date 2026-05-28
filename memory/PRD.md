@@ -14,89 +14,80 @@
 3. **Enterprise AI teams** needing data-sovereignty and cost predictability.
 
 ## Architecture
-- **Backend**: FastAPI + MongoDB. JWT auth. Emergent Universal LLM Key for OpenAI/Anthropic/Gemini calls via `emergentintegrations`. Stripe Checkout for paid plans.
+- **Backend**: FastAPI + MongoDB. JWT auth. Emergent Universal LLM Key for OpenAI/Anthropic/Gemini via `emergentintegrations`. Stripe Checkout for paid plans. Resend for transactional email. ReportLab for branded PDFs.
 - **Frontend**: React 19 + TailwindCSS + shadcn-ui + Recharts + Sonner toasts.
-- **Design**: Dark theme — Obsidian Black + Signal Orange (#FF4500) + Matrix Green (#00E676), with Cabinet Grotesk display, IBM Plex Sans/Mono.
+- **Design**: Dark — Obsidian Black + Signal Orange #FF4500 + Matrix Green #00E676 — Cabinet Grotesk + IBM Plex Sans/Mono.
 - **Optimization engine** (`/app/backend/optimizer.py`): pure-Python, deterministic. ~57% savings on the demo prompt.
 
-## Core Requirements (static)
-1. Public landing page with conversion-optimized hero, live calculator, 5-pillar bento, infrastructure section, waitlist + pricing teaser.
-2. Email/password JWT auth (24h tokens, Bearer header).
-3. Auto-issued API key on signup; full CRUD with reveal/copy/revoke.
-4. LLM proxy endpoint `POST /api/proxy/chat` with `X-TF-Key` header — distills prompt, hits semantic cache, routes to right model tier, calls Universal Key LLM, returns response + token accounting + cost-saved metric.
-5. Public optimizer endpoint `POST /api/optimize` (no auth) — distills any prompt without calling the LLM.
-6. Stripe Checkout for Starter ($19), Pro ($99), Enterprise ($499) plans + webhook + transaction ledger.
-7. Dashboard: KPI grid, 14-day Recharts charts, request logs.
-8. Admin role with overview + waitlist table (RBAC enforced server + client side).
-9. Documentation page with curl / Python / JS samples + copy buttons.
-10. Waitlist capture for enterprise pilot.
+## What's Been Implemented — 2026-01 (live + verified)
 
-## What's Been Implemented — 2026-01
-
-### Backend (✓ 33/33 tests passing as of iter-3)
-- ✓ JWT auth (register / login / me with monthly usage payload) + bcrypt password hashing
-- ✓ Auto-seeded admin user from `.env`
+### Backend (✓ tested across 5 iterations)
+- ✓ JWT auth (register / login / me with usage payload) + bcrypt password hashing
+- ✓ Auto-seeded admin
 - ✓ API key CRUD with active/revoked state
-- ✓ 5-pillar optimization engine (`optimizer.py`)
+- ✓ 5-pillar optimization engine
 - ✓ LLM proxy with semantic cache (cosine ≥ 0.98) and multi-tier routing
-- ✓ Real LLM calls via `emergentintegrations` (OpenAI/Anthropic/Gemini)
-- ✓ **Monthly token quota enforcement** on `/api/proxy/chat` (HTTP 429 when over)
-- ✓ Dashboard analytics: `/overview`, `/timeseries`, `/logs`
-- ✓ Stripe Checkout session + webhook + payment_transactions ledger
-- ✓ **Annual billing cycle** with 20% discount (monthly|annual on `/api/billing/checkout`)
+- ✓ Real LLM calls via Universal Key (OpenAI/Anthropic/Gemini)
+- ✓ Monthly token quota enforcement (HTTP 429 when exceeded)
+- ✓ Stripe Checkout with **monthly + annual (−20%)** billing cycles + webhook + transaction ledger
 - ✓ Plan upgrade on `payment_status=paid` updates user quota
-- ✓ **ROI Savings Report PDF** via `/api/reports/savings.pdf` (ReportLab, branded)
+- ✓ Dashboard analytics: `/overview`, `/timeseries`, `/logs`
+- ✓ **ROI Savings Report PDF** via `/api/reports/savings.pdf` (branded ReportLab)
+- ✓ **Email-me-the-report** via `/api/reports/savings/email` (PDF attached)
+- ✓ **Public shareable savings receipt** — `POST /api/share/savings` returns idempotent slug → `GET /api/share/savings/<slug>` returns lifetime aggregates
 - ✓ Admin overview endpoint (RBAC) with revenue + waitlist
-- ✓ Mongo indexes on email/key/created_at, etc.
+- ✓ **Resend transactional email**: welcome, quota alerts (80% + 100%, deduped per period), payment confirmation, ROI report
+- ✓ **Rate limiting** with X-Forwarded-For awareness: `/optimize` 30/60s, `/auth/register` 8/600s, `/auth/login` 10/300s, `/waitlist` 10/300s
+- ✓ Mongo indexes (users, api_keys, proxy_requests, waitlist, semantic_cache, payment_transactions, share_links, email_alerts)
 
-### Frontend (✓ 19/19 flows passing across iters 2+3)
-- ✓ Landing page with live token counter, calculator, bento grid of 5 pillars, infrastructure block, waitlist form, pricing teaser
-- ✓ Login / Register with form validation + error mapping
-- ✓ Pricing page with 4 tiers + **Monthly/Annual toggle** + Stripe redirect
-- ✓ Playground (public + signed-in) with sample buttons
-- ✓ Dashboard with Recharts, recent-logs table, **live Quota Meter**, **80%/100% Quota Alert Banner**, **Download ROI Report (PDF) button**
-- ✓ API Keys page with reveal/copy/revoke
-- ✓ Logs page (up to 100 entries)
-- ✓ Billing page + Monthly/Annual toggle + usage bar + BillingSuccess polling
-- ✓ Docs page with tabbed code samples (curl/python/js) + copy
+### Frontend (✓ 100% pass through all iterations)
+- ✓ Landing page with hero, live counter, calculator, 5-pillar bento, infrastructure, waitlist, pricing teaser
+- ✓ Login / Register with JWT + Bearer auth
+- ✓ Pricing with **Monthly/Annual toggle** + Stripe redirect
+- ✓ Playground
+- ✓ Dashboard: Quota Meter + 80%/100% Alert Banner + Recharts + logs + **Share / Email / Download** buttons for the ROI report
+- ✓ API Keys page (reveal/copy/revoke)
+- ✓ Logs page
+- ✓ Billing page with usage bar + Monthly/Annual + BillingSuccess polling
+- ✓ Docs with curl/Python/JS tabs + copy
 - ✓ Admin console
-- ✓ Custom typography (Cabinet Grotesk + IBM Plex Sans/Mono)
+- ✓ **Public `/share/<slug>`** receipt page with Tweet-your-savings CTA (hidden at $0 lifetime) and 404 state with recovery CTAs
 
-### Enhancements shipped — 2026-01 (iter-3)
-1. Monthly token quota enforcement + dashboard meter + 80%/100% alert banner
-2. ROI Savings Report PDF (branded, with KPIs + per-model breakdown)
-3. Annual billing toggle (20% discount, monthly-equivalent shown)
-4. Usage usage bar on Billing page
+### Test posture
+- iter-1: 27/27 backend ✓
+- iter-2: 13/13 frontend ✓
+- iter-3: 33/33 backend + 6/6 frontend ✓ (quota, PDF, annual, banner)
+- iter-4: 14/18 backend (4 rate-limit failures — diagnosed XFF bug) + 5/5 frontend ✓
+- iter-5: 6/6 rate-limit + 11/11 smoke + 100% frontend ✓ (XFF fix verified)
 
 ## Prioritized Backlog
 
 ### P0 — Pre-launch hardening
-- [ ] Per-user monthly quota enforcement on `/proxy/chat` (currently logged, not enforced)
-- [ ] Rate limit `/api/optimize` (public endpoint, DOS surface)
-- [ ] Move CORS `allow_origins` from `*` to explicit prod origin
-- [ ] Sanitize LLM error messages before bubbling to 502 detail
+- [ ] Pin CORS `allow_origins` to explicit production origin (currently `*`)
+- [ ] Migrate rate-limit buckets to Redis once we scale beyond uvicorn single-worker
+- [ ] Verify `alreadyherellc.com` domain in Resend → flip `SENDER_EMAIL` to `dispatch@alreadyherellc.com` and `OPERATOR_BCC=1`
 
 ### P1 — Revenue + retention
-- [ ] Annual billing with discount (Stripe price IDs)
-- [ ] Usage email alerts at 80% / 100% of quota
-- [ ] "Refer a developer, get 1M free tokens" referral program
-- [ ] Public status page
+- [ ] Cron job to auto-email monthly ROI report on the 1st of each month
+- [ ] Email usage alerts also gate to "you'll hit your cap by <date>" projection
+- [ ] Referral program: `?ref=<user_id>` + +500K tokens on both sides
+- [ ] OG meta tags + screenshot per `/share/<slug>` for Twitter/LinkedIn previews
 
 ### P2 — Engine v2
-- [ ] Real tiktoken-based token estimation (replace heuristic)
-- [ ] Vector index for semantic cache (Mongo Atlas Vector Search or pinecone)
-- [ ] Per-provider failover (anthropic → openai if 5xx)
-- [ ] BYO Key option (user pastes their own provider key, we never see token spend)
+- [ ] tiktoken-accurate token estimation
+- [ ] Vector index (Atlas Vector Search / Pinecone) for semantic cache
+- [ ] Provider failover (Anthropic → OpenAI fallback on 5xx)
+- [ ] BYO Key
 
 ### P3 — Enterprise
 - [ ] SSO / SAML
-- [ ] VPC-deploy installer (mirror the OCI Free Tier 24/7 deployment from the spec)
-- [ ] Audit logs export (CSV / Datadog)
+- [ ] On-prem / VPC installer (per ATOE spec OCI Free Tier baseline)
+- [ ] CSV / Datadog audit log export
 
 ## Next Tasks
-1. P0 quota enforcement → ship enterprise pilots
-2. Build "ROI report" PDF generator (auto-emails the customer their monthly savings — best retention hook)
-3. Launch wait/lead capture → cold-outbound to top 50 AI startups by LLM spend
+1. Verify `alreadyherellc.com` in Resend dashboard so emails reach all customers (not just gmail owner)
+2. Pin CORS, deploy via Emergent's "Make Live" / Vercel
+3. Send first 50 cold outbound emails using the in-app Share / ROI receipt as proof-of-savings
 
 ## Test credentials
 See `/app/memory/test_credentials.md`.
