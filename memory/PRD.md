@@ -59,6 +59,15 @@
 - iter-3: 33/33 backend + 6/6 frontend ✓ (quota, PDF, annual, banner)
 - iter-4: 14/18 backend (4 rate-limit failures — diagnosed XFF bug) + 5/5 frontend ✓
 - iter-5: 6/6 rate-limit + 11/11 smoke + 100% frontend ✓ (XFF fix verified)
+- iter-6: 16/16 + 100% frontend ✓ (code-review fixes — SHA-256, var init, stable keys)
+- iter-7: 18/25 backend + 90% frontend — /embed routing bug diagnosed
+- iter-8: **25/25 backend + 100% frontend ✓** (embed widget — route moved under /api)
+
+### Iter-7/8 — Embeddable savings widget
+- `GET /api/widget.js` — tiny IIFE loader; hosts paste a one-line `<script src="…/api/widget.js" data-tf-slug="…" data-tf-theme="dark" async defer></script>`
+- `GET /api/embed/<slug>` — branded iframe HTML with dark/light theme + postMessage auto-resize + ALLOWALL X-Frame-Options + `frame-ancestors *` CSP
+- Share page `/share/<slug>` gets "Embed this widget →" panel with copyable snippet, live preview, dark/light toggle
+- `avg_compression_pct` capped at 100% in share JSON + embed HTML (cache hits previously could inflate past 100%)
 
 ## Prioritized Backlog
 
