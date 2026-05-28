@@ -9,6 +9,7 @@ import { toast } from "sonner";
 // Module-level constants — stable references prevent Recharts tooltip remount on every render.
 const CHART_TOOLTIP_STYLE = { background: "#121212", border: "1px solid #27272A", fontSize: 12 };
 const CHART_TOOLTIP_LABEL_STYLE = { color: "#FAFAFA" };
+const CHART_LINE_DOT = { fill: "#00E676", r: 3 };
 
 // Branch helpers to avoid nested ternaries (readability + lint-clean).
 function quotaColor(percent) {
@@ -262,7 +263,7 @@ export default function Dashboard() {
                       dataKey="tokens_saved"
                       stroke="#00E676"
                       strokeWidth={2}
-                      dot={{ fill: "#00E676", r: 3 }}
+                      dot={CHART_LINE_DOT}
                     />
                   </LineChart>
                 </ResponsiveContainer>

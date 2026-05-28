@@ -73,13 +73,17 @@ export default function Admin() {
   );
 }
 
+function kpiColorClass(success, accent) {
+  if (success) return "text-[rgb(var(--tf-success))]";
+  if (accent) return "text-[rgb(var(--tf-brand))]";
+  return "";
+}
+
 function Kpi({ label, value, accent, success }) {
   return (
     <div className="bg-[rgb(var(--tf-bg-2))] p-5">
       <div className="text-[10px] font-mono uppercase tracking-widest text-[rgb(var(--tf-text-muted))]">{label}</div>
-      <div className={`font-display text-2xl mt-2 tf-counter ${
-        success ? "text-[rgb(var(--tf-success))]" : accent ? "text-[rgb(var(--tf-brand))]" : ""
-      }`}>{value}</div>
+      <div className={`font-display text-2xl mt-2 tf-counter ${kpiColorClass(success, accent)}`}>{value}</div>
     </div>
   );
 }

@@ -1,0 +1,32 @@
+{
+  "summary": "Iter-10 polish pass 3 — pure constant/helper extraction. All green. Backend pytest 25/25 PASS on /app/backend/tests/test_tokenforge_iter7_widget.py (JUnit: /app/test_reports/pytest/pytest_iter10.xml; covers widget.js, /api/embed/<slug> public+internal, theme=light, avg_pct cap, auth/me admin, register+me, optimize public, billing plans/monthly/annual checkout, reports/savings.pdf, dashboard/overview, admin/overview RBAC ok+forbidden, share/savings create+get). Frontend smoke verified end-to-end against the production preview URL: Landing (/), Pricing, Playground, Docs, Login, Register, /share/<slug>, /dashboard (after admin login), /admin all return rendered HTML with no runtime errors. Three refactor sites confirmed live: (1) Docs.jsx renders exactly 3 tables with row counts 5/3/3, matching PROXY_PARAM_ROWS (5) / MODEL_ROWS (3) / ERROR_ROWS (3) — content checks confirm 'gpt-4o-mini', '401', '502', 'prompt', 'system', 'provider', 'optimize' all present. (2) Dashboard.jsx chart-tokens renders with Recharts circle dots — CHART_LINE_DOT ({fill:'#00E676', r:3}) applied stably across renders. (3) Admin.jsx KPI grid shows the three kpiColorClass branches simultaneously: TOKENS SAVED='236' in green tf-success (success=true), REVENUE='$0.00' in orange tf-accent (accent=true), USERS/WAITLIST/REQUESTS/PAID TX in default white — proves the kpiColorClass(success, accent) helper produces identical output to the prior nested ternary. Pure refactor; zero behavior change confirmed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tokenforge_iter7_widget.py",
+    "/app/test_reports/pytest/pytest_iter10.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Docs.jsx — PROXY_PARAM_ROWS / MODEL_ROWS / ERROR_ROWS hoisted to module-scope arrays; correct: stable refs prevent the inline-array-literal-as-prop pattern that forces Table to re-reconcile rows on every Docs render. No deps captured, safe.",
+    "Dashboard.jsx — CHART_LINE_DOT = {fill:'#00E676', r:3} hoisted; correct. Recharts <Line> dot prop now receives a stable object across renders, avoiding per-frame dot re-creation. Hardcoded '#00E676' (rather than the rgb(var(--tf-success)) token used elsewhere) is acceptable since Recharts SVG doesn't resolve CSS vars in inline strings cleanly — consistent with how other Recharts color props in this file are handled.",
+    "Admin.jsx — kpiColorClass(success, accent) helper replaces the previous nested ternary; mapping is identical: success → 'text-[rgb(var(--tf-success))]', accent → 'text-[rgb(var(--tf-accent))]', else → 'text-white'. Branch precedence (success wins over accent) preserved. Verified live: TOKENS SAVED green, REVENUE orange in same KPI grid.",
+    "No new files >700 lines. No new endpoints. No new env vars. No new data-testids needed. ObjectId still excluded across all responses (no regression in 25/25 backend tests). data-testid coverage on changed pages unchanged.",
+    "Optional (not blocking): if a future iter adds more KPI tints (e.g., 'warning'), consider promoting kpiColorClass to accept a single 'tone' enum ('success'|'accent'|'warning'|'default') instead of two booleans — clearer call sites, same behavior."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (25/25)", "frontend": "100% (9 routes smoke-verified incl. admin; all 3 refactor sites visually confirmed)"},
+  "test_credentials": "Admin admin@tokenforge.io / ForgeAdmin!2026 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None — reused existing admin account; backend tests self-provision TEST_iter7_*@example.com throwaway users as before.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter-10 was three trivial module-level extractions: (a) Docs.jsx PROXY_PARAM_ROWS/MODEL_ROWS/ERROR_ROWS (b) Dashboard.jsx CHART_LINE_DOT (c) Admin.jsx kpiColorClass(success, accent) helper. No new endpoints, no schema changes, no data-testid changes. Existing 25-test backend suite remains the regression spine; rerun with `pytest backend/tests/test_tokenforge_iter7_widget.py -v --junitxml=/app/test_reports/pytest/pytest_iterN.xml`. For frontend, the three refactor sites are visually confirmable by: (i) Docs page must show exactly 3 tables with row counts 5/3/3; (ii) Dashboard chart-tokens must render circle dots (recharts-line-dot or circle in [data-testid='chart-tokens']); (iii) Admin Console KPIs must show TOKENS SAVED in green, REVENUE in orange, others in default white — all three colors simultaneously visible proves all three kpiColorClass branches work.",
+  "rca_of_the_issue": "N/A — no issues found. Constant/helper extraction is referentially identical to inline literals; verified by (a) 25 backend regression tests still pass; (b) all 3 Docs tables render with exact row counts; (c) Recharts dots visible on Dashboard chart; (d) Admin KPI grid displays the success/accent/default color branches simultaneously."
+}

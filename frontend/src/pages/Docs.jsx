@@ -5,6 +5,27 @@ import { toast } from "sonner";
 
 const SAMPLE_KEY = "tf_live_YOUR_API_KEY_HERE";
 
+// Hoisted table data — stable refs prevent <Table> re-render churn.
+const PROXY_PARAM_ROWS = [
+  ["prompt", "string (required)", "Raw user prompt to distill + send."],
+  ["system", "string (optional)", "System prompt. Default: 'You are a helpful assistant.'"],
+  ["provider", "openai | anthropic | gemini", "Default: anthropic"],
+  ["model", "string", "Model id, e.g. claude-sonnet-4-6"],
+  ["optimize", "bool", "Default true. Set false to skip distillation (for benchmarking)."],
+];
+
+const MODEL_ROWS = [
+  ["openai", "gpt-5.4, gpt-5.4-mini, gpt-4o, gpt-4o-mini", "best for general/code"],
+  ["anthropic", "claude-sonnet-4-6, claude-haiku-4-5", "best for reasoning, default"],
+  ["gemini", "gemini-3-flash-preview, gemini-3.1-pro-preview", "best for extraction, cheapest"],
+];
+
+const ERROR_ROWS = [
+  ["401", "Missing or invalid X-TF-Key"],
+  ["400", "Validation error (see detail)"],
+  ["502", "Upstream LLM provider error"],
+];
+
 const CURL_SAMPLE = (origin, key) => `curl -X POST ${origin}/api/proxy/chat \\
   -H "X-TF-Key: ${key}" \\
   -H "Content-Type: application/json" \\
@@ -139,13 +160,7 @@ export default function Docs() {
               Distills the prompt, optionally hits the semantic cache, routes to the right model, and returns the model's reply along with token accounting.
             </p>
             <h4 className="font-display text-lg mt-5">Request body</h4>
-            <Table rows={[
-              ["prompt", "string (required)", "Raw user prompt to distill + send."],
-              ["system", "string (optional)", "System prompt. Default: 'You are a helpful assistant.'"],
-              ["provider", "openai | anthropic | gemini", "Default: anthropic"],
-              ["model", "string", "Model id, e.g. claude-sonnet-4-6"],
-              ["optimize", "bool", "Default true. Set false to skip distillation (for benchmarking)."],
-            ]} />
+            <Table rows={PROXY_PARAM_ROWS} />
             <h4 className="font-display text-lg mt-5">Response</h4>
             <pre className="bg-[rgb(var(--tf-bg-3))] border border-[rgb(var(--tf-border))] rounded-md p-4 font-mono text-sm whitespace-pre overflow-x-auto">{`{
   "response": "…model reply…",
@@ -169,19 +184,11 @@ export default function Docs() {
           </Section>
 
           <Section id="models" title="Supported models">
-            <Table rows={[
-              ["openai", "gpt-5.4, gpt-5.4-mini, gpt-4o, gpt-4o-mini", "best for general/code"],
-              ["anthropic", "claude-sonnet-4-6, claude-haiku-4-5", "best for reasoning, default"],
-              ["gemini", "gemini-3-flash-preview, gemini-3.1-pro-preview", "best for extraction, cheapest"],
-            ]} />
+            <Table rows={MODEL_ROWS} />
           </Section>
 
           <Section id="errors" title="Errors">
-            <Table rows={[
-              ["401", "Missing or invalid X-TF-Key"],
-              ["400", "Validation error (see detail)"],
-              ["502", "Upstream LLM provider error"],
-            ]} />
+            <Table rows={ERROR_ROWS} />
           </Section>
 
           <Section id="embed" title="Embed widget">
