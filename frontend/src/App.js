@@ -14,6 +14,7 @@ import Logs from "@/pages/Logs";
 import Billing, { BillingSuccess } from "@/pages/Billing";
 import Docs from "@/pages/Docs";
 import Admin from "@/pages/Admin";
+import Share from "@/pages/Share";
 
 function Protected({ children, adminOnly }) {
   const { user, bootstrapped } = useAuth();
@@ -41,6 +42,7 @@ function App() {
           <Route path="/pricing" element={<Pricing />} />
           <Route path="/playground" element={<Playground />} />
           <Route path="/docs" element={<Docs />} />
+          <Route path="/share/:slug" element={<Share />} />
           <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
           <Route path="/dashboard/keys" element={<Protected><Keys /></Protected>} />
           <Route path="/dashboard/logs" element={<Protected><Logs /></Protected>} />

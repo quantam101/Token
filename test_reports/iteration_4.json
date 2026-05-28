@@ -1,0 +1,62 @@
+{
+  "summary": "Iteration 4 — TokenForge testing (Resend transactional emails, public share receipt, ROI PDF/email helper, rate limits). 14/18 backend pytest cases pass (1 test bug fixed → now 14/18) and 5/5 UI flows pass via Playwright on the preview URL. 4 of 4 rate-limit assertions FAILED because rate_limit() keys on request.client.host but behind the k8s ingress this rotates across ingress pods (10.79.138.194, 10.79.129.133), defeating the per-IP bucket. Resend integration verified — real delivery only to alreadyherellc@gmail.com (test mode), all other sends are gracefully swallowed and surrounding flows still return 200.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/optimize, /api/auth/register, /api/auth/login, /api/waitlist",
+        "issue": "Rate limiter completely ineffective behind k8s ingress. rate_limit() uses request.client.host which is the ingress proxy peer IP; ingress runs multiple pods (10.79.138.194, 10.79.129.133 observed in backend logs) so each caller is bucketed under whichever pod proxied the request, doubling/tripling the effective budget. Confirmed: 80 sequential POST /api/optimize from a single client returned 200 on every call (limit is 30/60s). Same observed for /auth/register (10/10 succeeded vs limit 8/600s), /auth/login (12/12 succeeded vs limit 10/300s), /waitlist (12/12 vs limit 10/300s). Fix: read client IP from X-Forwarded-For header first (first comma-split entry) before falling back to request.client.host. Also note in-memory bucket is fine here since uvicorn runs --workers 1 but will break the moment workers>1 or pods scale; consider a Redis-backed limiter or slowapi+redis for production.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "/api/share/savings",
+        "issue": "Slug generator uses secrets.token_urlsafe(9).replace('-','').replace('_','')[:12]. After stripping URL-safe specials the slug can be <12 chars in rare cases; not a bug per se but worth tightening to guarantee fixed length (e.g. loop until len>=12 or use secrets.token_hex(6))."
+      },
+      {
+        "endpoint": "/api/share/savings (POST)",
+        "issue": "Endpoint name says 'create (or rotate)' in the docstring but the implementation is strictly idempotent and never rotates — either implement rotation behind a query flag or fix the docstring."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/share/:slug not-found", "issues": ["The 'Link not found' message is the only content — consider adding a CTA back to /register or / to recover; right now it's just a single dim mono line on a black canvas."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tokenforge_iter4.py",
+    "/app/backend/tests/test_tokenforge_enhancements.py",
+    "/app/backend/tests/test_tokenforge_backend.py",
+    "/app/test_reports/pytest/pytest_results_iter4.xml"
+  ],
+  "action_items": [
+    "FIX rate_limit() in /app/backend/server.py to honor X-Forwarded-For (or X-Real-IP) so per-IP buckets actually work behind the k8s/Cloudflare-style ingress. Example: ip = (request.headers.get('x-forwarded-for') or '').split(',')[0].strip() or (request.client.host if request.client else '?').",
+    "(Optional) Tighten share-slug generator to always be exactly 12 chars and document idempotent semantics in the docstring.",
+    "(Cosmetic) Add a CTA link on the /share/:slug not-found state."
+  ],
+  "critical_code_review_comments": [
+    "rate_limit() (server.py:106-127) is an in-memory dict keyed by (client.host + key_suffix). Two latent issues beyond the ingress-IP bug: (1) no upper bound on _RL_BUCKETS dict size — every distinct IP+suffix combo lives forever, slow memory leak. (2) Will reset on every backend reload — fine for now (single worker, hot-reload dev) but means anyone can spam by waiting for a deploy. Consider slowapi w/ Redis once you scale beyond a single pod.",
+    "email_service.send_email() correctly returns None on Resend failure and never raises (verified by test_email_savings_report_non_verified_recipient_resilient). Good. One nit: the log line uses log.exception() inside an `except Exception as e:` and also prints %s — fine but verbose for an expected sandbox-restriction failure; consider downgrading the known 'You can only send testing emails…' branch to log.warning to keep ERROR-level logs clean.",
+    "/api/reports/savings/email re-renders the PDF from scratch on every call (calls _render_savings_pdf_bytes). For a Pro user with months of history this is fine, but if this endpoint is ever wired to a 'mail me my report every week' cron it should cache the byte buffer for ~5 min.",
+    "POST /api/share/savings does not validate that the slug it generates is unique against existing share_links.slug index — relies on the unique index to raise. With only 12 random chars from a base62-like alphabet collisions are vanishingly unlikely, but the code path currently has no retry — a collision would surface as a raw 500. Add a try/except around the insert with one retry.",
+    "Welcome / quota-alert / payment-confirmation emails all derive the origin from request headers (origin/referer). Webhook path (stripe_webhook → render_payment_confirmation) hardcodes 'https://tokenforge.io/dashboard' because there is no request origin — fine but worth a comment so future devs don't 'fix' it.",
+    "Share.jsx tweet() reads data.cost_saved_usd directly into the tweet text — for a $0.0000 user this currently produces a slightly silly tweet ('I've saved 0 tokens ($0)...'). Consider hiding the tweet button until lifetime tokens_saved > 0.",
+    "Frontend share page renders 'Link not found' via data-testid='share-error' — good — but does not set the document title or any meta tag so the OG preview when shared on Twitter/LinkedIn will be the generic site title. Add OpenGraph tags at least for the /share/:slug route."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_tokenforge_iter4.py (new)"
+  ],
+  "success_rate": {
+    "backend": "78% (14/18 — 4 rate-limit assertions failing due to real ingress-IP bug, not test bugs)",
+    "frontend": "100% (5/5 UI flows: login, dashboard buttons render & trigger correct API, /share/:slug renders data, unknown slug shows share-error, tweet button visible)"
+  },
+  "test_credentials": "Admin admin@tokenforge.io / ForgeAdmin!2026; QA alreadyherellc@gmail.com / ForgeQA!2026; ephemeral TEST_resilient_*@example.com / TEST_emailfail_*@example.com / TEST_rl_reg_*@example.com / TEST_wl_*@x.io created by pytest.",
+  "seed_data_creation": "Pytest auto-created: ~12 TEST_* throwaway users (with one auto-issued API key each), ~12 TEST_wl_* waitlist rows, 1 share_links row for the QA user (slug observed: 3NmofmMSb6R during UI run; pytest reuses the same persisted slug across runs because endpoint is idempotent). No production / admin data modified.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run with: pytest /app/backend/tests/ -v (uses dotenv to load REACT_APP_BACKEND_URL from /app/frontend/.env). The 4 zz_rate_limit_* tests will keep failing until rate_limit() in server.py uses X-Forwarded-For. The other 14 cases are stable. Resend test-mode delivers ONLY to alreadyherellc@gmail.com — every other recipient produces a logged 'You can only send testing emails…' error but the surrounding HTTP request still returns 200, which is the desired behavior and is asserted by test_register_returns_token_even_if_resend_rejects and test_email_savings_report_non_verified_recipient_resilient. UI dashboard exposes new buttons share-savings-btn / email-report-btn / download-report-btn; /share/:slug uses data-testid share-content / share-tokens / share-tweet / share-cta-signup and data-testid share-error for the 404 state.",
+  "rca_of_the_issue": "Rate-limit bypass — ROOT CAUSE: rate_limit() in /app/backend/server.py:113 uses `request.client.host` to identify the caller. Behind the Emergent k8s ingress this header is the immediate TCP peer (an ingress controller pod IP, NOT the real client). Backend access log confirms two pod IPs alternating: 10.79.138.194 and 10.79.129.133. Because requests round-robin across pods, each caller is fragmented across N in-memory buckets, multiplying the effective limit by N (≥2). REPRO: from /app on the cluster: `for i in $(seq 1 80); do curl -s -o /dev/null -w '%{http_code}\\n' -X POST $REACT_APP_BACKEND_URL/api/optimize -H 'Content-Type: application/json' -d '{\"text\":\"hi\"}'; done` → all 200. MITIGATION (1-line patch): in rate_limit(), prefer X-Forwarded-For (first hop) over request.client.host: `xff = request.headers.get('x-forwarded-for', ''); ip = (xff.split(',')[0].strip() if xff else (request.client.host if request.client else '?'))`. Verify the ingress sets X-Forwarded-For (curl https://.../api/ headers via a debug endpoint, or check uvicorn access log). Once X-Forwarded-For is honored, all 4 zz_rate_limit_* tests should pass."
+}

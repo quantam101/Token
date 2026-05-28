@@ -63,6 +63,35 @@ export default function Dashboard() {
     }
   };
 
+  const [emailing, setEmailing] = useState(false);
+  const emailReport = async () => {
+    setEmailing(true);
+    try {
+      const { data } = await client.post("/reports/savings/email");
+      if (data.sent) toast.success("Report emailed — check your inbox");
+      else toast.error("Email failed — check backend config");
+    } catch (e) {
+      toast.error("Email failed");
+    } finally {
+      setEmailing(false);
+    }
+  };
+
+  const [sharing, setSharing] = useState(false);
+  const createShare = async () => {
+    setSharing(true);
+    try {
+      const { data } = await client.post("/share/savings");
+      const url = `${window.location.origin}/share/${data.slug}`;
+      await navigator.clipboard.writeText(url);
+      toast.success("Public share link copied to clipboard");
+    } catch (e) {
+      toast.error("Failed to create share link");
+    } finally {
+      setSharing(false);
+    }
+  };
+
   const usage = user?.usage || { tokens_used: 0, monthly_quota: 50000, percent_used: 0 };
   const pct = Math.min(100, usage.percent_used || 0);
   const showWarn = pct >= 80 && pct < 100;
@@ -111,7 +140,23 @@ export default function Dashboard() {
             </div>
             <h1 className="font-display text-3xl tracking-tight mt-1">Overview</h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              data-testid="share-savings-btn"
+              onClick={createShare}
+              disabled={sharing}
+              className="text-xs font-mono border border-[rgb(var(--tf-border))] hover:border-[rgb(var(--tf-success))] hover:text-[rgb(var(--tf-success))] px-3 py-1.5 rounded-sm text-[rgb(var(--tf-text-2))] transition-colors disabled:opacity-60"
+            >
+              {sharing ? "creating…" : "🔗 share my savings"}
+            </button>
+            <button
+              data-testid="email-report-btn"
+              onClick={emailReport}
+              disabled={emailing}
+              className="text-xs font-mono border border-[rgb(var(--tf-border))] hover:border-[rgb(var(--tf-brand))] hover:text-[rgb(var(--tf-brand))] px-3 py-1.5 rounded-sm text-[rgb(var(--tf-text-2))] transition-colors disabled:opacity-60"
+            >
+              {emailing ? "sending…" : "✉ email me the report"}
+            </button>
             <button
               data-testid="download-report-btn"
               onClick={downloadReport}
