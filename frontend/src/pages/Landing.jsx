@@ -55,7 +55,10 @@ export default function Landing() {
         const { data } = await client.get("/stats/public");
         setStats(data);
       } catch (e) {
-        console.warn("public stats fetch failed (non-blocking)", e);
+        if (process.env.NODE_ENV !== "production") {
+          // eslint-disable-next-line no-console
+          console.warn("public stats fetch failed (non-blocking)", e);
+        }
       }
     })();
     // Run an initial optimize on the sample so user sees instant value

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from "react";
 import client, { setToken, getToken, formatApiErrorDetail } from "./api";
 
 const AuthCtx = createContext(null);
@@ -29,7 +29,7 @@ export function AuthProvider({ children }) {
     fetchMe();
   }, [fetchMe]);
 
-  const login = async (email, password) => {
+  const login = useCallback(async (email, password) => {
     try {
       const { data } = await client.post("/auth/login", { email, password });
       setToken(data.token);
@@ -38,9 +38,9 @@ export function AuthProvider({ children }) {
     } catch (e) {
       return { ok: false, error: formatApiErrorDetail(e.response?.data?.detail) || e.message };
     }
-  };
+  }, []);
 
-  const register = async (email, password, name) => {
+  const register = useCallback(async (email, password, name) => {
     try {
       const { data } = await client.post("/auth/register", { email, password, name });
       setToken(data.token);
@@ -49,18 +49,20 @@ export function AuthProvider({ children }) {
     } catch (e) {
       return { ok: false, error: formatApiErrorDetail(e.response?.data?.detail) || e.message };
     }
-  };
+  }, []);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     setToken(null);
     setUser(false);
-  };
+  }, []);
 
-  return (
-    <AuthCtx.Provider value={{ user, bootstrapped, login, register, logout, refresh: fetchMe }}>
-      {children}
-    </AuthCtx.Provider>
+  // Memoize context value so consumers don't re-render on every parent render.
+  const value = useMemo(
+    () => ({ user, bootstrapped, login, register, logout, refresh: fetchMe }),
+    [user, bootstrapped, login, register, logout, fetchMe]
   );
+
+  return <AuthCtx.Provider value={value}>{children}</AuthCtx.Provider>;
 }
 
 export const useAuth = () => useContext(AuthCtx);

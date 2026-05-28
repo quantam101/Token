@@ -5,6 +5,12 @@ import { useAuth } from "@/lib/auth";
 import { DashboardNav, Footer } from "@/components/Nav";
 import { toast } from "sonner";
 
+function usageBarColor(percent) {
+  if (percent >= 100) return "bg-[rgb(var(--tf-error))]";
+  if (percent >= 80) return "bg-[rgb(var(--tf-warning))]";
+  return "bg-[rgb(var(--tf-success))]";
+}
+
 export default function Billing() {
   const { user } = useAuth();
   const [plans, setPlans] = useState([]);
@@ -80,11 +86,7 @@ export default function Billing() {
             </div>
             <div className="h-2 bg-[rgb(var(--tf-bg-3))] rounded-sm overflow-hidden">
               <div
-                className={`h-full transition-all duration-500 ${
-                  pct >= 100 ? "bg-[rgb(var(--tf-error))]" :
-                  pct >= 80 ? "bg-[rgb(var(--tf-warning))]" :
-                  "bg-[rgb(var(--tf-success))]"
-                }`}
+                className={`h-full transition-all duration-500 ${usageBarColor(pct)}`}
                 style={{ width: `${pct}%` }}
               />
             </div>

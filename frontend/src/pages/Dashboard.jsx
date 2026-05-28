@@ -6,6 +6,22 @@ import { DashboardNav, Footer } from "@/components/Nav";
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar } from "recharts";
 import { toast } from "sonner";
 
+// Module-level constants — stable references prevent Recharts tooltip remount on every render.
+const CHART_TOOLTIP_STYLE = { background: "#121212", border: "1px solid #27272A", fontSize: 12 };
+const CHART_TOOLTIP_LABEL_STYLE = { color: "#FAFAFA" };
+
+// Branch helpers to avoid nested ternaries (readability + lint-clean).
+function quotaColor(percent) {
+  if (percent >= 100) return "text-[rgb(var(--tf-error))]";
+  if (percent >= 80) return "text-[rgb(var(--tf-warning))]";
+  return "text-[rgb(var(--tf-success))]";
+}
+function quotaBarColor(percent) {
+  if (percent >= 100) return "bg-[rgb(var(--tf-error))]";
+  if (percent >= 80) return "bg-[rgb(var(--tf-warning))]";
+  return "bg-[rgb(var(--tf-success))]";
+}
+
 export default function Dashboard() {
   const { user, refresh } = useAuth();
   const nav = useNavigate();
@@ -182,11 +198,7 @@ export default function Dashboard() {
               MONTHLY QUOTA · {(user?.plan || "free").toUpperCase()}
             </span>
             <span className="text-[rgb(var(--tf-text-2))]">
-              <span data-testid="quota-used" className={
-                showBlock ? "text-[rgb(var(--tf-error))]" :
-                showWarn ? "text-[rgb(var(--tf-warning))]" :
-                "text-[rgb(var(--tf-success))]"
-              }>
+              <span data-testid="quota-used" className={quotaColor(pct)}>
                 {usage.tokens_used.toLocaleString()}
               </span>
               {" / "}
@@ -197,11 +209,7 @@ export default function Dashboard() {
           </div>
           <div className="h-2 bg-[rgb(var(--tf-bg-3))] rounded-sm overflow-hidden">
             <div
-              className={`h-full transition-all duration-500 ${
-                showBlock ? "bg-[rgb(var(--tf-error))]" :
-                showWarn ? "bg-[rgb(var(--tf-warning))]" :
-                "bg-[rgb(var(--tf-success))]"
-              }`}
+              className={`h-full transition-all duration-500 ${quotaBarColor(pct)}`}
               style={{ width: `${pct}%` }}
             />
           </div>
@@ -248,10 +256,7 @@ export default function Dashboard() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#27272A" />
                     <XAxis dataKey="date" stroke="#71717A" fontSize={11} />
                     <YAxis stroke="#71717A" fontSize={11} />
-                    <Tooltip
-                      contentStyle={{ background: "#121212", border: "1px solid #27272A", fontSize: 12 }}
-                      labelStyle={{ color: "#FAFAFA" }}
-                    />
+                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} />
                     <Line
                       type="monotone"
                       dataKey="tokens_saved"
@@ -277,9 +282,7 @@ export default function Dashboard() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#27272A" />
                     <XAxis dataKey="date" stroke="#71717A" fontSize={10} />
                     <YAxis stroke="#71717A" fontSize={10} />
-                    <Tooltip
-                      contentStyle={{ background: "#121212", border: "1px solid #27272A", fontSize: 12 }}
-                    />
+                    <Tooltip contentStyle={CHART_TOOLTIP_STYLE} labelStyle={CHART_TOOLTIP_LABEL_STYLE} />
                     <Bar dataKey="requests" fill="#FF4500" />
                   </BarChart>
                 </ResponsiveContainer>
