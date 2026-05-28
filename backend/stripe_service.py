@@ -80,6 +80,11 @@ class StripeCheckout:
             stripe.api_key = self.api_key
             return stripe.checkout.Session.create(
                 mode="payment",
+                # `card` automatically enables Apple Pay & Google Pay on
+                # supported devices (Safari/iOS, Chrome with saved cards) when
+                # the Stripe account has those wallets enabled in the
+                # dashboard. No extra wiring needed — Stripe Checkout renders
+                # the wallet buttons on its hosted page.
                 payment_method_types=["card"],
                 line_items=[{
                     "price_data": {
