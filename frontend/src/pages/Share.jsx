@@ -26,8 +26,26 @@ export default function Share() {
       <MarketingNav />
       <main className="flex-1 max-w-4xl w-full mx-auto px-6 py-16">
         {err ? (
-          <div data-testid="share-error" className="text-center text-[rgb(var(--tf-text-2))] font-mono py-24">
-            {err}
+          <div data-testid="share-error" className="text-center py-24">
+            <div className="font-mono text-xs uppercase tracking-widest text-[rgb(var(--tf-error))]">{err}</div>
+            <div className="font-display text-3xl mt-3 tracking-tight">This share link doesn't exist.</div>
+            <p className="text-[rgb(var(--tf-text-2))] mt-3 max-w-md mx-auto">
+              Maybe it was revoked, or you mistyped. Want your own savings dashboard?
+            </p>
+            <div className="mt-6 flex items-center justify-center gap-3">
+              <Link
+                to="/"
+                className="border border-[rgb(var(--tf-border-2))] hover:border-white text-white px-5 py-2.5 rounded-md text-sm transition-colors"
+              >
+                ← Home
+              </Link>
+              <Link
+                to="/register"
+                className="bg-[rgb(var(--tf-brand))] hover:bg-[rgb(var(--tf-brand-hover))] text-black font-medium px-5 py-2.5 rounded-md text-sm transition-colors"
+              >
+                Start saving free →
+              </Link>
+            </div>
           </div>
         ) : !data ? (
           <div className="text-center text-[rgb(var(--tf-text-muted))] font-mono py-24">
@@ -56,13 +74,15 @@ export default function Share() {
             </div>
 
             <div className="mt-10 flex flex-wrap gap-3">
-              <button
-                data-testid="share-tweet"
-                onClick={tweet}
-                className="bg-[rgb(var(--tf-brand))] hover:bg-[rgb(var(--tf-brand-hover))] text-black font-medium px-6 py-3 rounded-md transition-colors"
-              >
-                Tweet your savings →
-              </button>
+              {data.tokens_saved > 0 && (
+                <button
+                  data-testid="share-tweet"
+                  onClick={tweet}
+                  className="bg-[rgb(var(--tf-brand))] hover:bg-[rgb(var(--tf-brand-hover))] text-black font-medium px-6 py-3 rounded-md transition-colors"
+                >
+                  Tweet your savings →
+                </button>
+              )}
               <Link
                 to="/register"
                 data-testid="share-cta-signup"

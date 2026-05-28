@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 5 retest: rate_limit() now honors X-Forwarded-For and the share /share/:slug 404 + conditional tweet button are confirmed shipped. ALL 4 previously-failing rate-limit assertions now PASS when each test sends a unique X-Forwarded-For header (203.0.113.0/24): /optimize (30/60s), /auth/register (8/600s), /auth/login (10/300s), /waitlist (10/300s). Bucket isolation verified — exhausted IP receives 429+Retry-After, fresh IP still receives 200. Frontend /share/:slug 404 now renders 'This share link doesn't exist.' with both Home and Register CTAs (data-testid='share-error' preserved). Tweet button correctly HIDDEN when tokens_saved==0 (verified for QA user slug 3NmofmMSb6R). All 11 regression smoke tests pass (auth, dashboard, admin, keys, billing checkout monthly+annual, waitlist, optimize, ROI PDF, ROI email Resend send-True for QA, share create+read).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/* (rate-limited endpoints)",
+        "issue": "rate_limit() is now correctly per-XFF, but the legacy /app/backend/tests/test_tokenforge_backend.py (iter1) bursts auth without unique XFF headers, so its register/login tests now flap with 429s once budgets are consumed. Not an app regression — older test file needs to be updated to send unique X-Forwarded-For per test class (same pattern iter4/iter5 use)."
+      },
+      {
+        "endpoint": "rate_limit() impl",
+        "issue": "Still a single-process in-memory dict (_RL_BUCKETS) — works because uvicorn runs --workers 1; will fragment the moment workers>1 or pods scale horizontally. Consider Redis-backed limiter (slowapi+redis or aiolimiter+redis) before scaling out."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tokenforge_iter5.py",
+    "/app/backend/tests/test_tokenforge_iter5_smoke.py",
+    "/app/test_reports/pytest/pytest_results_iter5.xml",
+    "/app/test_reports/pytest/pytest_iter5_smoke.xml"
+  ],
+  "action_items": [
+    "(Optional) Update legacy /app/backend/tests/test_tokenforge_backend.py to send unique X-Forwarded-For per test (like iter4/iter5 do) so it stops self-rate-limiting now that the limiter actually works.",
+    "(Future) Migrate _RL_BUCKETS to Redis-backed sliding window before scaling beyond a single uvicorn worker / pod."
+  ],
+  "critical_code_review_comments": [
+    "rate_limit() (server.py:109-141) — fix is correct: prefers X-Forwarded-For first-hop, falls back to x-real-ip, then request.client.host. Burst-tested 35 req with unique XFF: first ~30 return 200, then 429 + correct Retry-After header. Verified the 429 detail includes 'Rate limit' and Retry-After is an int seconds value. Bucket cleanup logic (>5000 keys) is still O(1000) per insertion when triggered — fine for now.",
+    "/app/frontend/src/pages/Share.jsx — improved 404 block looks good: keeps data-testid='share-error', adds two visible CTAs (← Home, Start saving free →), prose copy explains 'Maybe it was revoked, or you mistyped'. Tweet button is now correctly wrapped in {data.tokens_saved > 0 && (...)} so $0 lifetime users don't see a vanity tweet button. Suggest also gating tweet behind requests > 0 (a user with 0 requests but 0 tokens_saved is the same — already covered).",
+    "Share.jsx still does not set <title> or OG meta tags for the /share/:slug route, so Twitter/LinkedIn previews fall back to the generic site OG card. Minor SEO nit — not a regression.",
+    "email_service.py — sandbox failures now logged at WARNING (per request) instead of ERROR; verified backend logs show 'WARNING:tokenforge.email:resend.send rejected (sandbox)' for non-verified recipients. ERROR-level remains for unexpected failures (good)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_tokenforge_iter5.py (new — 6 rate-limit + isolation tests, all pass)",
+    "/app/backend/tests/test_tokenforge_iter5_smoke.py (new — 11 regression smoke tests, all pass)"
+  ],
+  "success_rate": {
+    "backend": "100% on iter5 rate-limit tests (6/6) and iter5 regression smoke (11/11); iter4 file still 17/18 in full-suite runs (the single optimize test flake is due to legacy test sharing real ingress XFF with iter5's tests across pytest runs — passes in isolation)",
+    "frontend": "100% (share 404 UI + conditional tweet button both verified via Playwright on preview URL)"
+  },
+  "test_credentials": "Admin admin@tokenforge.io / ForgeAdmin!2026; QA alreadyherellc@gmail.com / ForgeQA!2026.",
+  "seed_data_creation": "Ephemeral TEST_iter5_smoke_*, TEST_iter5_reg_*, TEST_iter5_wl_* throwaway users + waitlist rows + auto-issued API keys. Share row for QA user reused (idempotent, slug observed: 3NmofmMSb6R).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run with: pytest /app/backend/tests/test_tokenforge_iter5.py /app/backend/tests/test_tokenforge_iter5_smoke.py -v (uses dotenv for REACT_APP_BACKEND_URL from /app/frontend/.env). All rate-limit tests inject a unique X-Forwarded-For per test (203.0.113.x for iter5.py, 203.0.114.x for smoke.py) so they get isolated buckets and don't interfere with each other or with real users hitting the same pod. The legacy /app/backend/tests/test_tokenforge_backend.py burst-style tests now self-rate-limit because rate limiter actually works — update those tests to send XFF headers if you need them in CI. Resend send-True is verified for QA alreadyherellc@gmail.com on /api/reports/savings/email; non-verified throwaway recipients return 200 with sent=False (graceful). UI confirmed: data-testid='share-error' block now includes both Home (a[href='/']) and Register (a[href='/register']) CTAs; data-testid='share-tweet' is conditionally rendered only when tokens_saved>0 (verified absent on QA's 0-token share page).",
+  "rca_of_the_issue": "Iter-4 rate-limit bypass — FIXED in iter-5. rate_limit() in /app/backend/server.py:109-119 now reads request.headers.get('x-forwarded-for', '').split(',')[0].strip() first, then falls back to x-real-ip, then request.client.host. Verified the k8s ingress is propagating X-Forwarded-For: when each test sends a unique synthetic X-Forwarded-For (203.0.113.{n}) the per-IP bucket isolates correctly — 30 of 35 /optimize bursts return 200, the rest return 429 with a numeric Retry-After header. Isolation test confirms a second distinct XFF still gets 200 immediately after the first XFF is exhausted, proving the bucket key is now the synthetic XFF rather than the rotating pod IP. Resend WARNING-level downgrade also verified in tail -f /var/log/supervisor/backend.*.log."
+}

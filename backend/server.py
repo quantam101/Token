@@ -107,14 +107,20 @@ _RL_BUCKETS: Dict[str, List[float]] = {}
 
 
 def rate_limit(request: Request, key_suffix: str, max_calls: int, window_seconds: int) -> None:
-    """Raise 429 if caller exceeds max_calls within the rolling window."""
+    """Raise 429 if caller exceeds max_calls within the rolling window.
+    Honors X-Forwarded-For (first hop) for accurate per-client identification
+    behind a k8s/CDN/proxy ingress; falls back to request.client.host."""
     import time
 
-    ip = (request.client.host if request.client else "?") + ":" + key_suffix
+    xff = request.headers.get("x-forwarded-for", "") or request.headers.get("x-real-ip", "")
+    if xff:
+        ip = xff.split(",")[0].strip()
+    else:
+        ip = request.client.host if request.client else "?"
+    bucket_key = ip + ":" + key_suffix
     now_ts = time.time()
-    bucket = _RL_BUCKETS.setdefault(ip, [])
+    bucket = _RL_BUCKETS.setdefault(bucket_key, [])
     cutoff = now_ts - window_seconds
-    # purge old timestamps cheaply
     while bucket and bucket[0] < cutoff:
         bucket.pop(0)
     if len(bucket) >= max_calls:
@@ -125,6 +131,15 @@ def rate_limit(request: Request, key_suffix: str, max_calls: int, window_seconds
             headers={"Retry-After": str(retry_after)},
         )
     bucket.append(now_ts)
+    # opportunistic cleanup: prevent unbounded dict growth
+    if len(_RL_BUCKETS) > 5000:
+        # drop empty / fully-expired buckets
+        for k in list(_RL_BUCKETS.keys())[:1000]:
+            b = _RL_BUCKETS[k]
+            while b and b[0] < cutoff:
+                b.pop(0)
+            if not b:
+                _RL_BUCKETS.pop(k, None)
 
 
 # ------------------------------------------------------------------

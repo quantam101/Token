@@ -66,7 +66,12 @@ async def send_email(
         log.info("resend.send ok id=%s to=%s subject=%s", res.get("id"), to, subject)
         return res.get("id")
     except Exception as e:  # noqa: BLE001 - best effort
-        log.exception("resend.send failed to=%s: %s", to, e)
+        msg = str(e)
+        if "only send testing emails" in msg or "verify a domain" in msg:
+            # Known Resend test-mode restriction — keep logs clean.
+            log.warning("resend.send rejected (sandbox) to=%s: %s", to, msg)
+        else:
+            log.exception("resend.send failed to=%s: %s", to, e)
         return None
 
 
