@@ -33,31 +33,40 @@
 
 ## What's Been Implemented — 2026-01
 
-### Backend (✓ 27/27 tests passing)
-- ✓ JWT auth (register / login / me) + bcrypt password hashing
+### Backend (✓ 33/33 tests passing as of iter-3)
+- ✓ JWT auth (register / login / me with monthly usage payload) + bcrypt password hashing
 - ✓ Auto-seeded admin user from `.env`
 - ✓ API key CRUD with active/revoked state
 - ✓ 5-pillar optimization engine (`optimizer.py`)
 - ✓ LLM proxy with semantic cache (cosine ≥ 0.98) and multi-tier routing
 - ✓ Real LLM calls via `emergentintegrations` (OpenAI/Anthropic/Gemini)
+- ✓ **Monthly token quota enforcement** on `/api/proxy/chat` (HTTP 429 when over)
 - ✓ Dashboard analytics: `/overview`, `/timeseries`, `/logs`
 - ✓ Stripe Checkout session + webhook + payment_transactions ledger
+- ✓ **Annual billing cycle** with 20% discount (monthly|annual on `/api/billing/checkout`)
 - ✓ Plan upgrade on `payment_status=paid` updates user quota
+- ✓ **ROI Savings Report PDF** via `/api/reports/savings.pdf` (ReportLab, branded)
 - ✓ Admin overview endpoint (RBAC) with revenue + waitlist
 - ✓ Mongo indexes on email/key/created_at, etc.
 
-### Frontend (✓ 13/13 flows passing)
+### Frontend (✓ 19/19 flows passing across iters 2+3)
 - ✓ Landing page with live token counter, calculator, bento grid of 5 pillars, infrastructure block, waitlist form, pricing teaser
 - ✓ Login / Register with form validation + error mapping
-- ✓ Pricing page with all 4 tiers + Stripe redirect
+- ✓ Pricing page with 4 tiers + **Monthly/Annual toggle** + Stripe redirect
 - ✓ Playground (public + signed-in) with sample buttons
-- ✓ Dashboard with Recharts (Line + Bar) and recent-logs table
+- ✓ Dashboard with Recharts, recent-logs table, **live Quota Meter**, **80%/100% Quota Alert Banner**, **Download ROI Report (PDF) button**
 - ✓ API Keys page with reveal/copy/revoke
 - ✓ Logs page (up to 100 entries)
-- ✓ Billing page + BillingSuccess polling with `payment_status` updates
+- ✓ Billing page + Monthly/Annual toggle + usage bar + BillingSuccess polling
 - ✓ Docs page with tabbed code samples (curl/python/js) + copy
 - ✓ Admin console
-- ✓ Custom typography (Cabinet Grotesk + IBM Plex Sans/Mono) loaded via Fontshare + Google Fonts
+- ✓ Custom typography (Cabinet Grotesk + IBM Plex Sans/Mono)
+
+### Enhancements shipped — 2026-01 (iter-3)
+1. Monthly token quota enforcement + dashboard meter + 80%/100% alert banner
+2. ROI Savings Report PDF (branded, with KPIs + per-model breakdown)
+3. Annual billing toggle (20% discount, monthly-equivalent shown)
+4. Usage usage bar on Billing page
 
 ## Prioritized Backlog
 
