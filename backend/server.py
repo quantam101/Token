@@ -437,7 +437,11 @@ async def login(body: LoginIn, request: Request):
     rate_limit(request, "auth_login", max_calls=10, window_seconds=300)
     email = body.email.lower().strip()
     user = await db.users.find_one({"email": email})
-    if not user or not verify_password(body.password, user["password_hash"]):
+    # Constant-time-ish path: always run bcrypt verify, even on missing user,
+    # against a fixed dummy hash so timing doesn't reveal account existence.
+    dummy_hash = "$2b$12$" + "x" * 53  # invalid but well-formed bcrypt hash
+    password_ok = verify_password(body.password, user["password_hash"] if user else dummy_hash)
+    if not user or not password_ok:
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = make_token(user["id"], user["email"])
     return {
@@ -890,10 +894,12 @@ _BYOK_TEST_MODELS = {
 
 
 @api.post("/byok/{provider}/test")
-async def test_byok_key(provider: str, user=Depends(current_user)):
+async def test_byok_key(provider: str, request: Request, user=Depends(current_user)):
     """Fire a minimal 1-token request using the user's stored BYOK key.
     Returns latency + model name on success, or a friendly error string on
-    failure (insufficient quota, invalid key, etc.). Pro+ only."""
+    failure (insufficient quota, invalid key, etc.). Pro+ only.
+    Rate-limited per user to prevent quota-drain abuse."""
+    rate_limit(request, f"byok_test:{user['id']}", max_calls=5, window_seconds=60)
     user_plan = (user.get("plan") or "free").lower()
     if user_plan not in BYOK_PLANS:
         raise HTTPException(status_code=402, detail="BYO Keys is a Pro / Enterprise feature.")

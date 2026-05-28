@@ -156,7 +156,8 @@ class LlmChat:
         raise ValueError(f"unsupported provider: {self._provider}")
 
     async def _openai(self, model: str, user_text: str) -> str:
-        client = _get_openai()
+        byok = self._byok.get("openai")
+        client = _make_openai(byok) if byok else _get_openai()
         resp = await client.chat.completions.create(
             model=model,
             messages=[
@@ -169,7 +170,8 @@ class LlmChat:
         return (resp.choices[0].message.content or "").strip()
 
     async def _anthropic(self, model: str, user_text: str) -> str:
-        client = _get_anthropic()
+        byok = self._byok.get("anthropic")
+        client = _make_anthropic(byok) if byok else _get_anthropic()
         resp = await client.messages.create(
             model=model,
             system=self.system_message,
@@ -185,7 +187,8 @@ class LlmChat:
         return "".join(parts).strip()
 
     async def _gemini(self, model: str, user_text: str) -> str:
-        client = _get_gemini()
+        byok = self._byok.get("google") or self._byok.get("gemini")
+        client = _make_gemini(byok) if byok else _get_gemini()
         from google.genai import types as genai_types
 
         prompt = f"{self.system_message}\n\nUser: {user_text}"
