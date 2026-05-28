@@ -932,7 +932,9 @@ async def test_byok_key(provider: str, request: Request, user=Depends(current_us
     except Exception as e:  # noqa: BLE001 — we want to surface whatever the SDK throws
         # Map common provider error shapes to a short, customer-friendly string
         msg = str(e)
-        if "insufficient_quota" in msg or "billing" in msg.lower():
+        if "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower() and "free" in msg.lower():
+            friendly = "Provider daily quota hit — try again later or upgrade your provider plan."
+        elif "insufficient_quota" in msg or "billing" in msg.lower():
             friendly = "Key is valid but your provider account is out of credits."
         elif "401" in msg or "unauthorized" in msg.lower() or "invalid_api_key" in msg.lower():
             friendly = "Key was rejected by the provider — likely invalid or revoked."
