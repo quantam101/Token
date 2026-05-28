@@ -1,0 +1,31 @@
+{
+  "summary": "End-to-end UI testing of TokenForge SPA via preview URL. All 13 requested flows pass: landing renders (hero/counters/calculator/pillars/infra/waitlist/pricing-teaser/footer), live calculator round-trip via /api/optimize works with metrics, waitlist toasts both states ('You're on the list' + 'already on the waitlist'), register→/dashboard, login/logout round-trip, KPI grid + Recharts panel, API key list/create/copy/reveal/revoke (with window.confirm accept), Playground signed-in and signed-out both functional, Docs tabs (curl/python/js) + copy, Pricing 4 cards visible + Pro Upgrade returns Stripe checkout 200 and navigates to checkout.stripe.com, Billing current-plan card + all 3 upgrade buttons present, /admin redirect-to-/dashboard for non-admin enforced, Admin login shows admin-kpis + admin-waitlist-table, DashboardNav shows user-email + plan badge.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "All authed pages (DashboardNav)", "issues": ["Sonner toast appears top-right and can briefly overlap the 'Sign out' button + plan badge. Cosmetic only — toast auto-dismisses, no functional block."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tokenforge_backend.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/iteration_1.json"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Pricing.jsx hard-codes a synthetic 'free' tier on top of backend /billing/plans response — acceptable but couples FE to BE plan list shape; consider returning 'free' from the backend for a single source of truth.",
+    "Keys.jsx revoke() relies on window.confirm — works but not accessible/testable without dialog handler; consider a shadcn AlertDialog with a data-testid on the confirm button for better UX + Playwright friendliness.",
+    "Billing.jsx fetches /billing/plans without a loading/error state; if request fails, the upgrade grid is silently empty.",
+    "Admin protection is client-side only (redirect on user.role !== 'admin'). Backend already enforces 403 on admin endpoints (verified iter-1), so this is acceptable, but worth a comment in code."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (carry-over from iter-1)", "frontend": "100% (13/13 flows pass)"},
+  "test_credentials": "Admin: admin@tokenforge.io / ForgeAdmin!2026. Fresh test users created dynamically: qa_<ts>@tokenforge.io / qaforge123.",
+  "seed_data_creation": "Created 2 fresh QA users, 1 waitlist entry (qa_wl_<ts>@tokenforge.io), 2 API keys (one revoked), 1 Stripe test-mode checkout session (cs_test_...) via Pro upgrade click. No production data modified.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Preview URL = https://market-launch-43.preview.emergentagent.com (from /app/frontend/.env). All data-testid attributes are present on interactive elements. Stripe is in test mode and the Pro CTA correctly navigates to checkout.stripe.com — DO NOT complete payment. /api/billing/plans does NOT include 'free' tier; FE synthesizes it. Revoke flow uses window.confirm() — Playwright must register page.on('dialog', d=>d.accept()) before clicking. Toaster (sonner) sits top-right and can briefly overlay the Sign-out button in screenshots, not a functional issue. Fonts load correctly (Cabinet Grotesk + IBM Plex Sans/Mono). Brand color is rgb(255,69,0) as required.",
+  "rca_of_the_issue": "N/A — no failures."
+}
