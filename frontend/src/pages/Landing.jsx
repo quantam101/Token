@@ -12,6 +12,17 @@ const INFRA_IMG =
 
 const SAMPLE = `Hello, could you please help me? In order to summarize the following information about artificial intelligence and machine learning, I would like you to write a paragraph. Thank you in advance for your help.`;
 
+// Public list pricing per 1M INPUT tokens (USD). Conservative — we only quote input
+// savings since that's what TokenForge optimizes deterministically.
+const MODEL_PRICING = {
+  "gpt-4o":             { label: "OpenAI GPT-4o",        input: 5.00 },
+  "gpt-4o-mini":        { label: "OpenAI GPT-4o mini",   input: 0.15 },
+  "claude-sonnet-4-5":  { label: "Claude Sonnet 4.5",    input: 3.00 },
+  "claude-haiku-4-5":   { label: "Claude Haiku 4.5",     input: 0.80 },
+  "gemini-2.5-pro":     { label: "Gemini 2.5 Pro",       input: 1.25 },
+  "gemini-2.5-flash":   { label: "Gemini 2.5 Flash",     input: 0.30 },
+};
+
 function useTypedCounter(target, duration = 1500) {
   const [v, setV] = useState(0);
   useEffect(() => {
@@ -49,6 +60,9 @@ export default function Landing() {
   const [wlEmail, setWlEmail] = useState("");
   const [wlCompany, setWlCompany] = useState("");
   const [wlSubmitting, setWlSubmitting] = useState(false);
+  // Savings projector inputs
+  const [projModel, setProjModel] = useState("gpt-4o");
+  const [projVolume, setProjVolume] = useState(1_000_000); // requests / month
 
   useEffect(() => {
     (async () => {
@@ -243,6 +257,78 @@ export default function Landing() {
                     <Metric label="Optimized" value={calcResult.optimized_tokens} unit="tk" accent />
                     <Metric label="Saved" value={`${calcResult.percent_saved}%`} success />
                   </div>
+
+                  {/* $ SAVINGS PROJECTOR — public demo, no signup */}
+                  <div
+                    className="mt-6 border border-[rgb(var(--tf-border))] bg-[rgb(var(--tf-bg-2))] rounded-md p-5"
+                    data-testid="savings-projector"
+                  >
+                    <div className="font-mono text-xs uppercase tracking-widest text-[rgb(var(--tf-brand))]">
+                      $ SAVINGS PROJECTOR
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs font-mono text-[rgb(var(--tf-text-muted))]">Model</label>
+                        <select
+                          data-testid="proj-model"
+                          value={projModel}
+                          onChange={(e) => setProjModel(e.target.value)}
+                          className="mt-1 w-full bg-[rgb(var(--tf-bg))] border border-[rgb(var(--tf-border))] focus:border-[rgb(var(--tf-brand))] outline-none rounded-md p-2 font-mono text-sm text-white"
+                        >
+                          {Object.entries(MODEL_PRICING).map(([id, m]) => (
+                            <option key={id} value={id}>{m.label} — ${m.input.toFixed(2)}/M in</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs font-mono text-[rgb(var(--tf-text-muted))]">
+                          Requests / month: <span className="text-white">{projVolume.toLocaleString()}</span>
+                        </label>
+                        <input
+                          data-testid="proj-volume"
+                          type="range"
+                          min={1_000}
+                          max={50_000_000}
+                          step={1_000}
+                          value={projVolume}
+                          onChange={(e) => setProjVolume(parseInt(e.target.value, 10))}
+                          className="mt-3 w-full accent-[rgb(var(--tf-brand))]"
+                        />
+                      </div>
+                    </div>
+                    {(() => {
+                      const m = MODEL_PRICING[projModel];
+                      const tokensSavedPerReq = calcResult.original_tokens - calcResult.optimized_tokens;
+                      const monthlySavings = (tokensSavedPerReq * projVolume * m.input) / 1_000_000;
+                      const annualSavings = monthlySavings * 12;
+                      const annualBeforeOptimize =
+                        (calcResult.original_tokens * projVolume * m.input * 12) / 1_000_000;
+                      return (
+                        <div className="mt-4 flex items-baseline flex-wrap gap-x-3">
+                          <div className="text-xs font-mono text-[rgb(var(--tf-text-muted))]">
+                            Annual {m.label} bill
+                          </div>
+                          <div className="font-mono text-[rgb(var(--tf-text-2))] line-through">
+                            ${Math.round(annualBeforeOptimize).toLocaleString()}
+                          </div>
+                          <div className="font-display text-3xl text-[rgb(var(--tf-success))]" data-testid="proj-annual-saved">
+                            → ${Math.round(annualBeforeOptimize - annualSavings).toLocaleString()} <span className="text-sm text-[rgb(var(--tf-text-muted))] font-mono">w/ TokenForge</span>
+                          </div>
+                          <div className="basis-full mt-1 font-mono text-sm text-[rgb(var(--tf-success))]">
+                            ✓ Saves you ${Math.round(annualSavings).toLocaleString()}/yr · {calcResult.percent_saved}% input cost
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    <Link
+                      to="/register"
+                      data-testid="proj-cta"
+                      className="mt-4 inline-flex items-center gap-2 bg-[rgb(var(--tf-brand))] hover:bg-[rgb(var(--tf-brand-hover))] text-black font-medium text-sm px-4 py-2 rounded-md transition-colors"
+                    >
+                      Start saving — free →
+                    </Link>
+                  </div>
+
                   <pre
                     data-testid="calc-output"
                     className="mt-5 bg-[rgb(var(--tf-bg-2))] border border-[rgb(var(--tf-border))] p-4 rounded-md font-mono text-sm text-[rgb(var(--tf-text))] whitespace-pre-wrap"
