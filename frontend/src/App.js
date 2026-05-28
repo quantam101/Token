@@ -1,55 +1,56 @@
-import { useEffect } from "react";
+import React from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { Toaster } from "sonner";
+import { AuthProvider, useAuth } from "@/lib/auth";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+import Landing from "@/pages/Landing";
+import { Login, Register } from "@/pages/Auth";
+import Pricing from "@/pages/Pricing";
+import Playground from "@/pages/Playground";
+import Dashboard from "@/pages/Dashboard";
+import Keys from "@/pages/Keys";
+import Logs from "@/pages/Logs";
+import Billing, { BillingSuccess } from "@/pages/Billing";
+import Docs from "@/pages/Docs";
+import Admin from "@/pages/Admin";
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
+function Protected({ children, adminOnly }) {
+  const { user, bootstrapped } = useAuth();
+  if (!bootstrapped) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[rgb(var(--tf-bg))] text-[rgb(var(--tf-text-muted))] font-mono text-sm">
+        <span className="tf-dot" /><span className="tf-dot" /><span className="tf-dot" />
+      </div>
+    );
+  }
+  if (!user) return <Navigate to="/login" replace />;
+  if (adminOnly && user.role !== "admin") return <Navigate to="/dashboard" replace />;
+  return children;
+}
 
 function App() {
   return (
-    <div className="App">
+    <AuthProvider>
       <BrowserRouter>
+        <Toaster theme="dark" position="top-right" richColors />
         <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
+          <Route path="/" element={<Landing />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route path="/pricing" element={<Pricing />} />
+          <Route path="/playground" element={<Playground />} />
+          <Route path="/docs" element={<Docs />} />
+          <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
+          <Route path="/dashboard/keys" element={<Protected><Keys /></Protected>} />
+          <Route path="/dashboard/logs" element={<Protected><Logs /></Protected>} />
+          <Route path="/dashboard/billing" element={<Protected><Billing /></Protected>} />
+          <Route path="/billing/success" element={<Protected><BillingSuccess /></Protected>} />
+          <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
-    </div>
+    </AuthProvider>
   );
 }
 
