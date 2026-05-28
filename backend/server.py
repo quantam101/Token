@@ -1041,7 +1041,7 @@ async def widget_loader():
     var origin = new URL(s.src).origin;
 
     var iframe = document.createElement('iframe');
-    iframe.src = origin + '/embed/' + encodeURIComponent(slug) + '?theme=' + encodeURIComponent(theme);
+    iframe.src = origin + '/api/embed/' + encodeURIComponent(slug) + '?theme=' + encodeURIComponent(theme);
     iframe.setAttribute('title', 'TokenForge savings — live counter');
     iframe.setAttribute('loading', 'lazy');
     iframe.style.cssText = 'border:0;width:' + (isFinite(width) ? width + 'px' : width) +
@@ -1073,7 +1073,7 @@ async def widget_loader():
     )
 
 
-@app.get("/embed/{slug}")
+@api.get("/embed/{slug}")
 async def embed_page(slug: str, request: Request, theme: str = "dark"):
     """Standalone iframe-ready HTML that renders the live savings counter."""
     from fastapi.responses import HTMLResponse

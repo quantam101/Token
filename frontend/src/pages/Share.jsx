@@ -183,7 +183,7 @@ export default function Share() {
                       key={`${slug}-${theme}`}
                       data-testid="embed-preview-iframe"
                       title="TokenForge widget preview"
-                      src={`${BACKEND_URL}/embed/${slug}?theme=${theme}`}
+                      src={`${BACKEND_URL}/api/embed/${slug}?theme=${theme}`}
                       style={{
                         width: "100%",
                         minHeight: "200px",

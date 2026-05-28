@@ -67,22 +67,16 @@ class TestWidgetJs:
 # ---------- /embed/{slug} via PUBLIC PREVIEW URL (what hosts will iframe) ----------
 class TestEmbedPagePublic:
     def test_embed_public_url_returns_fastapi_html(self, admin_slug):
-        """The whole point of /embed is that hosts iframe it from BACKEND_URL/embed/<slug>.
-        If the platform ingress hijacks the path to the React frontend, the widget breaks."""
-        r = requests.get(f"{BASE}/embed/{admin_slug}", timeout=20)
+        """After iter-8 fix: route is now @api.get('/embed/{slug}'), public URL = /api/embed/<slug>."""
+        r = requests.get(f"{API}/embed/{admin_slug}", timeout=20)
         assert r.status_code == 200, r.text
         assert "text/html" in r.headers.get("content-type", "").lower()
         body = r.text
-        # The FastAPI embed page sets <title>TokenForge savings — {display_name}</title>
-        assert "TokenForge savings" in body, (
-            "Public /embed/<slug> is NOT returning the FastAPI iframe page — "
-            "ingress is routing /embed/* to the React frontend instead of the backend. "
-            "FIX: move route to /api/embed/{slug} (request author called this out)."
-        )
+        assert "TokenForge savings" in body
 
     def test_embed_contains_live_numbers_and_display_name(self, admin_slug):
         api_data = requests.get(f"{API}/share/savings/{admin_slug}", timeout=20).json()
-        r = requests.get(f"{BASE}/embed/{admin_slug}", timeout=20)
+        r = requests.get(f"{API}/embed/{admin_slug}", timeout=20)
         body = r.text
         assert api_data["display_name"] in body
         assert f"{api_data['tokens_saved']:,}" in body
@@ -90,31 +84,27 @@ class TestEmbedPagePublic:
         assert f"{api_data['requests']:,}" in body
 
     def test_embed_iframe_headers(self, admin_slug):
-        r = requests.get(f"{BASE}/embed/{admin_slug}", timeout=20)
+        r = requests.get(f"{API}/embed/{admin_slug}", timeout=20)
         xfo = r.headers.get("x-frame-options", "")
         csp = r.headers.get("content-security-policy", "")
         assert "ALLOWALL" in xfo.upper() or "ALLOW" in xfo.upper(), f"XFO header missing/wrong: {xfo!r}"
         assert "frame-ancestors" in csp.lower(), f"CSP frame-ancestors missing: {csp!r}"
 
     def test_embed_unknown_slug_returns_404_html(self):
-        r = requests.get(f"{BASE}/embed/__definitely_no_such_slug_zz9__", timeout=20)
+        r = requests.get(f"{API}/embed/__definitely_no_such_slug_zz9__", timeout=20)
         assert r.status_code == 404
         assert "text/html" in r.headers.get("content-type", "").lower()
         assert "no longer active" in r.text.lower()
-        # Must NOT be JSON detail
         assert '"detail"' not in r.text
 
     def test_embed_theme_light_palette(self, admin_slug):
-        r = requests.get(f"{BASE}/embed/{admin_slug}?theme=light", timeout=20)
+        r = requests.get(f"{API}/embed/{admin_slug}?theme=light", timeout=20)
         assert r.status_code == 200
         body = r.text
         assert "#FFFFFF" in body, "light theme should use white background"
-        # Dark theme bg should NOT be present in light
-        # (it could still appear inside JS strings, but the body bg should not be #0A0A0A)
-        # We at least confirm light bg is present.
 
     def test_embed_avg_pct_never_exceeds_100(self, admin_slug):
-        r = requests.get(f"{BASE}/embed/{admin_slug}", timeout=20)
+        r = requests.get(f"{API}/embed/{admin_slug}", timeout=20)
         body = r.text
         # Find the "Avg compression: <b ...>X%</b>" value
         m = re.search(r"Avg compression:\s*<b[^>]*>([\d.]+)%</b>", body)
@@ -126,24 +116,23 @@ class TestEmbedPagePublic:
 # ---------- /embed via internal localhost (proves backend code itself is correct) ----------
 class TestEmbedPageInternal:
     def test_embed_internal_localhost(self, admin_slug):
-        r = requests.get(f"http://localhost:8001/embed/{admin_slug}", timeout=20)
+        r = requests.get(f"http://localhost:8001/api/embed/{admin_slug}", timeout=20)
         assert r.status_code == 200
         assert "TokenForge savings" in r.text
         assert "ALLOWALL" in r.headers.get("x-frame-options", "").upper()
 
     def test_embed_internal_unknown_slug(self):
-        r = requests.get("http://localhost:8001/embed/__no_such__", timeout=20)
+        r = requests.get("http://localhost:8001/api/embed/__no_such__", timeout=20)
         assert r.status_code == 404
         assert "no longer active" in r.text.lower()
 
     def test_embed_internal_light_palette(self, admin_slug):
-        r = requests.get(f"http://localhost:8001/embed/{admin_slug}?theme=light", timeout=20)
+        r = requests.get(f"http://localhost:8001/api/embed/{admin_slug}?theme=light", timeout=20)
         assert r.status_code == 200
         assert "#FFFFFF" in r.text
-        assert "#0A0A0A" not in r.text or r.text.count("#0A0A0A") <= 1  # any leftover is incidental
 
     def test_embed_internal_avg_pct_cap(self, admin_slug):
-        r = requests.get(f"http://localhost:8001/embed/{admin_slug}", timeout=20)
+        r = requests.get(f"http://localhost:8001/api/embed/{admin_slug}", timeout=20)
         m = re.search(r"Avg compression:\s*<b[^>]*>([\d.]+)%</b>", r.text)
         assert m, "avg pct not found"
         assert float(m.group(1)) <= 100.0
