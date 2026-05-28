@@ -41,6 +41,7 @@ from email_service import (
     render_quota_alert,
     render_payment_confirmation,
     render_roi_report_email,
+    render_milestone_email,
 )
 
 # ------------------------------------------------------------------
@@ -529,6 +530,83 @@ async def _semantic_cache_store(user_id: str, prompt: str, response: str, model:
     )
 
 
+MILESTONES_USD = [1.0, 20.0, 100.0, 1000.0]
+
+
+async def _check_milestone(user: dict, request: Request) -> None:
+    """If lifetime cost_saved_usd crossed any milestone tier, auto-create a
+    public share link (idempotent) and email a celebratory receipt with the
+    OG image inline. Each tier fires at most once per user (forever)."""
+    agg = await _aggregate_savings(user["id"])
+    cost_saved = float(agg["lifetime"].get("cost_saved", 0.0))
+    tokens_saved = int(agg["lifetime"].get("saved", 0))
+    if cost_saved <= 0:
+        return
+
+    # Find the HIGHEST milestone the user has now crossed but hasn't been
+    # notified for yet. We fire one email per request to avoid spamming if a
+    # single big call jumps multiple tiers.
+    for threshold in reversed(MILESTONES_USD):
+        if cost_saved < threshold:
+            continue
+        dedupe_key = f"{user['id']}:milestone:{int(threshold)}"
+        existing = await db.milestone_alerts.find_one({"key": dedupe_key})
+        if existing:
+            continue
+        await db.milestone_alerts.insert_one(
+            {
+                "key": dedupe_key,
+                "user_id": user["id"],
+                "threshold_usd": threshold,
+                "cost_saved_at_fire": cost_saved,
+                "tokens_saved_at_fire": tokens_saved,
+                "created_at": _iso(),
+            }
+        )
+
+        # Auto-create share link if missing
+        share = await db.share_links.find_one({"user_id": user["id"]}, {"_id": 0})
+        if not share:
+            slug = secrets.token_urlsafe(9).replace("-", "").replace("_", "")[:12]
+            share = {
+                "id": str(uuid.uuid4()),
+                "user_id": user["id"],
+                "slug": slug,
+                "display_name": user.get("name") or "A TokenForge customer",
+                "created_at": _iso(),
+                "auto_created": True,
+            }
+            await db.share_links.insert_one(share)
+        slug = share["slug"]
+
+        origin = (
+            request.headers.get("origin")
+            or request.headers.get("referer")
+            or "https://tokenforge.io"
+        ).rstrip("/")
+        base = str(request.base_url).rstrip("/")
+        share_url = f"{origin}/share/{slug}"
+        og_url = f"{base}/api/share/savings/{slug}/og.png"
+
+        try:
+            await send_email(
+                to=user["email"],
+                subject=f"[TokenForge] You just saved ${int(threshold):,} — share your receipt 🎉",
+                html=render_milestone_email(
+                    user_name=user.get("name") or user["email"].split("@")[0],
+                    milestone_usd=threshold,
+                    tokens_saved=tokens_saved,
+                    cost_saved=cost_saved,
+                    share_url=share_url,
+                    og_image_url=og_url,
+                ),
+            )
+        except Exception:
+            log.exception("milestone email failed")
+        # Fire only the highest unseen tier on this request
+        break
+
+
 async def _check_quota_alert(user: dict, request: Request) -> None:
     """If user just crossed 80% or 100% of their monthly quota, send an email
     (deduplicated per period)."""
@@ -669,6 +747,12 @@ async def proxy_chat(body: ProxyIn, request: Request, auth=Depends(require_api_k
         await _check_quota_alert(user, request)
     except Exception:
         log.exception("quota alert check failed")
+
+    # Milestone celebration ($ saved tiers)
+    try:
+        await _check_milestone(user, request)
+    except Exception:
+        log.exception("milestone check failed")
 
     return {
         "response": response_text,
@@ -1562,6 +1646,9 @@ async def admin_overview(user=Depends(require_admin)):
     ]
     sv = await db.proxy_requests.aggregate(saved_pipeline).to_list(1)
     tokens_saved = int(sv[0]["saved"]) if sv else 0
+    referrals = await db.referrals.count_documents({})
+    milestones_fired = await db.milestone_alerts.count_documents({})
+    auto_shares = await db.share_links.count_documents({"auto_created": True})
     waitlist_list = await db.waitlist.find({}, {"_id": 0}).sort("created_at", -1).limit(50).to_list(50)
     return {
         "users": users,
@@ -1570,6 +1657,9 @@ async def admin_overview(user=Depends(require_admin)):
         "paid_transactions": paid_tx,
         "revenue_usd": revenue,
         "total_tokens_saved": tokens_saved,
+        "referrals": referrals,
+        "milestones_fired": milestones_fired,
+        "auto_share_links": auto_shares,
         "recent_waitlist": waitlist_list,
     }
 
@@ -1592,6 +1682,8 @@ async def startup():
     await db.share_links.create_index("slug", unique=True)
     await db.share_links.create_index("user_id")
     await db.email_alerts.create_index("key", unique=True)
+    await db.milestone_alerts.create_index("key", unique=True)
+    await db.milestone_alerts.create_index("user_id")
     await db.referrals.create_index("referrer_id")
     await db.referrals.create_index("referee_id", unique=True)
     # Seed admin

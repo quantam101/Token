@@ -38,6 +38,9 @@ export default function Admin() {
               <Kpi label="Paid Tx" value={data.paid_transactions} />
               <Kpi label="Revenue" value={`$${data.revenue_usd.toFixed(2)}`} accent />
               <Kpi label="Tokens saved" value={data.total_tokens_saved.toLocaleString()} success />
+              <Kpi label="Referrals" value={data.referrals ?? 0} accent />
+              <Kpi label="Milestones fired" value={data.milestones_fired ?? 0} success />
+              <Kpi label="Auto share links" value={data.auto_share_links ?? 0} />
             </div>
 
             <div className="mt-8">

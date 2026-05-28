@@ -171,6 +171,57 @@ Your <b style="color:#FAFAFA;">{plan_name}</b> plan is now active. Your new quot
 """)
 
 
+# ----------------------------------------------------------------------
+# Milestone celebration email (auto-fires when cost_saved crosses a tier).
+# Includes the user's public share URL + OG image preview embedded.
+# ----------------------------------------------------------------------
+_MILESTONE_HEADLINES = {
+    1: ("First dollar saved 🎉", "You just crossed $1 saved. The flywheel is spinning."),
+    20: ("$20 saved on LLM costs 🚀", "That's a coffee tab. Real money distilled from prompts."),
+    100: ("$100 saved 🔥", "Three figures returned to your runway."),
+    1000: ("$1,000 saved 🏆", "Four figures avoided. This is exactly why the engine exists."),
+}
+
+
+def render_milestone_email(
+    user_name: str,
+    milestone_usd: float,
+    tokens_saved: int,
+    cost_saved: float,
+    share_url: str,
+    og_image_url: str,
+) -> str:
+    title, sub = _MILESTONE_HEADLINES.get(
+        int(milestone_usd),
+        (f"${int(milestone_usd):,} saved 🎉", "Another milestone on the savings chart."),
+    )
+    tweet_msg = (
+        f"I've saved {tokens_saved:,} tokens (${cost_saved:.2f}) "
+        f"on LLM costs with @TokenForge_io. {share_url}"
+    )
+    import urllib.parse
+    tweet_url = "https://twitter.com/intent/tweet?text=" + urllib.parse.quote(tweet_msg)
+    return _block(f"""\
+<div style="display:inline-block;padding:4px 10px;border:1px solid #FF4500;color:#FF4500;font-size:11px;letter-spacing:0.16em;font-family:'IBM Plex Mono',ui-monospace,Menlo,monospace;border-radius:2px;margin-bottom:12px;">MILESTONE</div>
+<h1 style="margin:0 0 6px;font-size:24px;letter-spacing:-0.6px;color:#FAFAFA;">{title}</h1>
+<p style="margin:0 0 18px;color:#A1A1AA;font-size:14px;line-height:1.6;">Hey {user_name} — {sub}</p>
+<a href="{share_url}" style="display:block;margin:0 0 18px;border-radius:6px;overflow:hidden;border:1px solid #27272A;">
+  <img src="{og_image_url}" alt="TokenForge savings receipt" width="100%" style="display:block;width:100%;height:auto;border:0;"/>
+</a>
+<p style="margin:0 0 16px;color:#A1A1AA;font-size:14px;line-height:1.6;">
+We just created a <b style="color:#FAFAFA;">public share link</b> for your savings receipt (above). Drop it anywhere — Slack, LinkedIn, your Notion, README — and the live counter ticks up over time. Every signup through your link grants you <b style="color:#00E676;">+500K bonus tokens</b> that month.
+</p>
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr>
+  <td style="padding-right:6px;">
+    <a href="{tweet_url}" style="display:block;text-align:center;background:#FF4500;color:#000;font-weight:600;padding:12px 18px;border-radius:4px;text-decoration:none;font-size:14px;">Tweet your savings →</a>
+  </td>
+  <td style="padding-left:6px;">
+    <a href="{share_url}" style="display:block;text-align:center;border:1px solid #3F3F46;color:#FAFAFA;padding:12px 18px;border-radius:4px;text-decoration:none;font-size:14px;">Open share page →</a>
+  </td>
+</tr></table>
+""")
+
+
 def render_roi_report_email(user_name: str, tokens_saved: int, cost_saved: float, dashboard_url: str) -> str:
     return _block(f"""\
 <h1 style="margin:0 0 8px;font-size:22px;letter-spacing:-0.5px;color:#FAFAFA;">Your monthly savings report, {user_name}.</h1>
