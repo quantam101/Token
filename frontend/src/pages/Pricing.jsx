@@ -14,7 +14,7 @@ const FEATURES = {
     "Unlimited API keys",
     "Priority support",
     "Advanced semantic cache",
-    "Webhooks",
+    "ROI savings report (PDF)",
   ],
   enterprise: [
     "100M tokens / month",
@@ -30,10 +30,15 @@ export default function Pricing() {
   const { user } = useAuth();
   const nav = useNavigate();
   const [plans, setPlans] = useState([]);
+  const [discount, setDiscount] = useState(20);
   const [busy, setBusy] = useState(null);
+  const [cycle, setCycle] = useState("monthly"); // monthly | annual
 
   useEffect(() => {
-    client.get("/billing/plans").then(({ data }) => setPlans(data.plans));
+    client.get("/billing/plans").then(({ data }) => {
+      setPlans(data.plans);
+      setDiscount(data.annual_discount_pct || 20);
+    });
   }, []);
 
   const buy = async (planId) => {
@@ -46,6 +51,7 @@ export default function Pricing() {
       const { data } = await client.post("/billing/checkout", {
         plan_id: planId,
         origin_url: window.location.origin,
+        billing_cycle: cycle,
       });
       window.location.href = data.url;
     } catch (e) {
@@ -54,10 +60,14 @@ export default function Pricing() {
     }
   };
 
-  const tiers = [
-    { id: "free", name: "Free", price: 0 },
-    ...plans,
-  ];
+  const displayPrice = (p) => {
+    if (p.id === "free") return { value: 0, sub: "/mo" };
+    if (cycle === "annual") {
+      // show monthly-equivalent on annual card
+      return { value: (p.annual_amount / 12).toFixed(2), sub: "/mo, billed annually", total: p.annual_amount };
+    }
+    return { value: p.amount.toFixed(2).replace(/\.00$/, ""), sub: "/mo" };
+  };
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -69,12 +79,39 @@ export default function Pricing() {
           <p className="text-[rgb(var(--tf-text-2))] mt-4">
             Every plan includes the full 5-pillar engine. You only pay more when you process more.
           </p>
+
+          {/* Billing cycle toggle */}
+          <div
+            data-testid="billing-cycle-toggle"
+            className="mt-8 inline-flex items-center gap-1 p-1 border border-[rgb(var(--tf-border))] bg-[rgb(var(--tf-bg-2))] rounded-md"
+          >
+            <button
+              data-testid="cycle-monthly"
+              onClick={() => setCycle("monthly")}
+              className={`px-4 py-1.5 text-xs font-mono uppercase tracking-widest rounded-sm transition-colors ${
+                cycle === "monthly" ? "bg-[rgb(var(--tf-bg-3))] text-white" : "text-[rgb(var(--tf-text-2))] hover:text-white"
+              }`}
+            >
+              Monthly
+            </button>
+            <button
+              data-testid="cycle-annual"
+              onClick={() => setCycle("annual")}
+              className={`px-4 py-1.5 text-xs font-mono uppercase tracking-widest rounded-sm transition-colors flex items-center gap-2 ${
+                cycle === "annual" ? "bg-[rgb(var(--tf-bg-3))] text-white" : "text-[rgb(var(--tf-text-2))] hover:text-white"
+              }`}
+            >
+              Annual
+              <span className="text-[10px] text-[rgb(var(--tf-success))]">−{discount}%</span>
+            </button>
+          </div>
         </div>
 
         <div className="mt-14 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-px bg-[rgb(var(--tf-border))] border border-[rgb(var(--tf-border))]">
-          {tiers.map((t) => {
+          {plans.map((t) => {
             const featured = t.id === "pro";
             const isCurrent = user?.plan === t.id;
+            const price = displayPrice(t);
             return (
               <div
                 key={t.id}
@@ -90,9 +127,14 @@ export default function Pricing() {
                   {t.name || t.id}
                 </div>
                 <div className="font-display text-5xl mt-2 tracking-tight">
-                  ${t.id === "free" ? 0 : t.amount}
-                  <span className="text-sm text-[rgb(var(--tf-text-muted))] font-mono ml-1">/mo</span>
+                  ${price.value}
+                  <span className="text-sm text-[rgb(var(--tf-text-muted))] font-mono ml-1">{price.sub}</span>
                 </div>
+                {price.total && (
+                  <div className="text-[10px] font-mono text-[rgb(var(--tf-success))] mt-1">
+                    ${price.total.toFixed(2)} billed yearly
+                  </div>
+                )}
                 <div className="font-mono text-xs text-[rgb(var(--tf-text-2))] mt-1">
                   {t.id === "free" ? "50,000" : t.monthly_quota?.toLocaleString()} tokens / mo
                 </div>
@@ -132,7 +174,7 @@ export default function Pricing() {
                           : "border border-[rgb(var(--tf-border-2))] hover:border-white"
                       } disabled:opacity-60`}
                     >
-                      {isCurrent ? "Current plan" : busy === t.id ? "Redirecting…" : `Upgrade — $${t.amount}/mo`}
+                      {isCurrent ? "Current plan" : busy === t.id ? "Redirecting…" : `Upgrade — ${cycle === "annual" ? `$${(t.annual_amount).toFixed(0)}/yr` : `$${t.amount}/mo`}`}
                     </button>
                   )}
                 </div>

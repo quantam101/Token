@@ -10,9 +10,15 @@ export default function Billing() {
   const nav = useNavigate();
   const [plans, setPlans] = useState([]);
   const [busy, setBusy] = useState(null);
+  const [cycle, setCycle] = useState("monthly");
+  const [discount, setDiscount] = useState(20);
 
   useEffect(() => {
-    client.get("/billing/plans").then(({ data }) => setPlans(data.plans));
+    client.get("/billing/plans").then(({ data }) => {
+      // Only show paid plans on billing page (free isn't upgradable)
+      setPlans(data.plans.filter((p) => p.id !== "free"));
+      setDiscount(data.annual_discount_pct || 20);
+    });
   }, []);
 
   const buy = async (planId) => {
@@ -21,6 +27,7 @@ export default function Billing() {
       const { data } = await client.post("/billing/checkout", {
         plan_id: planId,
         origin_url: window.location.origin,
+        billing_cycle: cycle,
       });
       window.location.href = data.url;
     } catch (e) {
@@ -28,6 +35,9 @@ export default function Billing() {
       setBusy(null);
     }
   };
+
+  const usage = user?.usage || { tokens_used: 0, monthly_quota: 50000, percent_used: 0 };
+  const pct = Math.min(100, usage.percent_used || 0);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -41,7 +51,7 @@ export default function Billing() {
         </div>
 
         <div className="mt-6 border border-[rgb(var(--tf-border))] p-6 bg-[rgb(var(--tf-bg-2))]" data-testid="current-plan-card">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between flex-wrap gap-3">
             <div>
               <div className="text-xs font-mono uppercase tracking-widest text-[rgb(var(--tf-text-muted))]">
                 Current plan
@@ -57,21 +67,70 @@ export default function Billing() {
               </div>
             </div>
           </div>
+          {/* Usage bar */}
+          <div className="mt-5">
+            <div className="flex items-center justify-between text-xs font-mono mb-2">
+              <span className="uppercase tracking-widest text-[rgb(var(--tf-text-muted))]">
+                Used this month
+              </span>
+              <span className="text-[rgb(var(--tf-text-2))]">
+                {usage.tokens_used.toLocaleString()} / {usage.monthly_quota.toLocaleString()} ({pct}%)
+              </span>
+            </div>
+            <div className="h-2 bg-[rgb(var(--tf-bg-3))] rounded-sm overflow-hidden">
+              <div
+                className={`h-full transition-all duration-500 ${
+                  pct >= 100 ? "bg-[rgb(var(--tf-error))]" :
+                  pct >= 80 ? "bg-[rgb(var(--tf-warning))]" :
+                  "bg-[rgb(var(--tf-success))]"
+                }`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
         </div>
 
-        <h2 className="font-display text-2xl tracking-tight mt-10 mb-4">Upgrade</h2>
-        <div className="grid md:grid-cols-3 gap-px bg-[rgb(var(--tf-border))] border border-[rgb(var(--tf-border))]">
+        <div className="mt-10 flex items-center justify-between flex-wrap gap-3">
+          <h2 className="font-display text-2xl tracking-tight">Upgrade</h2>
+          <div
+            data-testid="billing-cycle-toggle"
+            className="inline-flex items-center gap-1 p-1 border border-[rgb(var(--tf-border))] bg-[rgb(var(--tf-bg-2))] rounded-md"
+          >
+            <button
+              data-testid="bill-cycle-monthly"
+              onClick={() => setCycle("monthly")}
+              className={`px-3 py-1.5 text-xs font-mono uppercase tracking-widest rounded-sm transition-colors ${
+                cycle === "monthly" ? "bg-[rgb(var(--tf-bg-3))] text-white" : "text-[rgb(var(--tf-text-2))] hover:text-white"
+              }`}
+            >
+              Monthly
+            </button>
+            <button
+              data-testid="bill-cycle-annual"
+              onClick={() => setCycle("annual")}
+              className={`px-3 py-1.5 text-xs font-mono uppercase tracking-widest rounded-sm transition-colors flex items-center gap-2 ${
+                cycle === "annual" ? "bg-[rgb(var(--tf-bg-3))] text-white" : "text-[rgb(var(--tf-text-2))] hover:text-white"
+              }`}
+            >
+              Annual <span className="text-[10px] text-[rgb(var(--tf-success))]">−{discount}%</span>
+            </button>
+          </div>
+        </div>
+        <div className="mt-4 grid md:grid-cols-3 gap-px bg-[rgb(var(--tf-border))] border border-[rgb(var(--tf-border))]">
           {plans.map((p) => {
             const isCurrent = user?.plan === p.id;
             const featured = p.id === "pro";
+            const price = cycle === "annual" ? (p.annual_amount / 12).toFixed(2) : p.amount.toFixed(2).replace(/\.00$/, "");
             return (
               <div key={p.id} data-testid={`billing-plan-${p.id}`} className={`bg-[rgb(var(--tf-bg-2))] p-6 tf-beam ${featured ? "tf-active" : ""}`}>
                 <div className="text-xs font-mono uppercase tracking-widest text-[rgb(var(--tf-text-muted))]">
                   {p.name}
                 </div>
                 <div className="font-display text-4xl mt-2 tracking-tight">
-                  ${p.amount}
-                  <span className="text-sm text-[rgb(var(--tf-text-muted))] font-mono ml-1">/mo</span>
+                  ${price}
+                  <span className="text-sm text-[rgb(var(--tf-text-muted))] font-mono ml-1">
+                    {cycle === "annual" ? "/mo, billed annually" : "/mo"}
+                  </span>
                 </div>
                 <div className="font-mono text-xs text-[rgb(var(--tf-text-2))] mt-1">
                   {p.monthly_quota.toLocaleString()} tokens / mo
@@ -86,7 +145,7 @@ export default function Billing() {
                       : "border border-[rgb(var(--tf-border-2))] hover:border-white"
                   } disabled:opacity-60`}
                 >
-                  {isCurrent ? "Current" : busy === p.id ? "Redirecting…" : `Upgrade — $${p.amount}/mo`}
+                  {isCurrent ? "Current" : busy === p.id ? "Redirecting…" : `Upgrade — ${cycle === "annual" ? `$${p.annual_amount.toFixed(0)}/yr` : `$${p.amount}/mo`}`}
                 </button>
               </div>
             );

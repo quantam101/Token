@@ -1,16 +1,19 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import client, { formatApiErrorDetail } from "@/lib/api";
+import client, { BACKEND_URL, getToken, formatApiErrorDetail } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { DashboardNav, Footer } from "@/components/Nav";
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, BarChart, Bar } from "recharts";
 import { toast } from "sonner";
 
 export default function Dashboard() {
+  const { user, refresh } = useAuth();
+  const nav = useNavigate();
   const [overview, setOverview] = useState(null);
   const [series, setSeries] = useState([]);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [downloading, setDownloading] = useState(false);
 
   const load = async () => {
     try {
@@ -22,6 +25,7 @@ export default function Dashboard() {
       setOverview(ov.data);
       setSeries(ts.data.series);
       setLogs(lg.data.logs);
+      await refresh();
     } catch (e) {
       toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Failed");
     } finally {
@@ -31,26 +35,131 @@ export default function Dashboard() {
 
   useEffect(() => {
     load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const downloadReport = async () => {
+    setDownloading(true);
+    try {
+      const token = getToken();
+      const res = await fetch(`${BACKEND_URL}/api/reports/savings.pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `tokenforge-savings-${new Date().toISOString().slice(0, 7).replace("-", "")}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("ROI report downloaded");
+    } catch (e) {
+      toast.error("Failed to generate report");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const usage = user?.usage || { tokens_used: 0, monthly_quota: 50000, percent_used: 0 };
+  const pct = Math.min(100, usage.percent_used || 0);
+  const showWarn = pct >= 80 && pct < 100;
+  const showBlock = pct >= 100;
 
   return (
     <div className="min-h-screen flex flex-col">
       <DashboardNav />
       <main className="flex-1 max-w-7xl w-full mx-auto px-6 py-8">
-        <div className="flex items-end justify-between mb-6">
+        {/* Quota Alert Banner */}
+        {(showWarn || showBlock) && (
+          <div
+            data-testid="quota-alert-banner"
+            className={`mb-6 border rounded-md p-4 flex items-center justify-between flex-wrap gap-3 ${
+              showBlock
+                ? "border-[rgb(var(--tf-error))] bg-[rgba(244,67,54,0.08)]"
+                : "border-[rgb(var(--tf-warning))] bg-[rgba(255,179,0,0.08)]"
+            }`}
+          >
+            <div>
+              <div className={`font-mono text-xs uppercase tracking-widest ${
+                showBlock ? "text-[rgb(var(--tf-error))]" : "text-[rgb(var(--tf-warning))]"
+              }`}>
+                {showBlock ? "QUOTA EXCEEDED" : "QUOTA WARNING"}
+              </div>
+              <div className="text-sm mt-1">
+                {showBlock
+                  ? `You've used 100% of your monthly quota (${usage.tokens_used.toLocaleString()} / ${usage.monthly_quota.toLocaleString()} tokens). Proxy calls will return 429 until next month or an upgrade.`
+                  : `You've used ${pct}% of your monthly quota (${usage.tokens_used.toLocaleString()} / ${usage.monthly_quota.toLocaleString()} tokens).`}
+              </div>
+            </div>
+            <button
+              data-testid="quota-alert-upgrade"
+              onClick={() => nav("/dashboard/billing")}
+              className="bg-[rgb(var(--tf-brand))] hover:bg-[rgb(var(--tf-brand-hover))] text-black font-medium px-4 py-2 rounded-md text-sm transition-colors"
+            >
+              Upgrade plan →
+            </button>
+          </div>
+        )}
+
+        <div className="flex items-end justify-between mb-6 flex-wrap gap-3">
           <div>
             <div className="font-mono text-xs uppercase tracking-widest text-[rgb(var(--tf-text-muted))]">
               CONTROL ROOM
             </div>
             <h1 className="font-display text-3xl tracking-tight mt-1">Overview</h1>
           </div>
-          <button
-            data-testid="refresh-overview"
-            onClick={load}
-            className="text-xs font-mono border border-[rgb(var(--tf-border))] hover:border-[rgb(var(--tf-brand))] px-3 py-1.5 rounded-sm text-[rgb(var(--tf-text-2))] hover:text-white transition-colors"
-          >
-            ⟳ refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              data-testid="download-report-btn"
+              onClick={downloadReport}
+              disabled={downloading}
+              className="text-xs font-mono border border-[rgb(var(--tf-brand))] text-[rgb(var(--tf-brand))] hover:bg-[rgb(var(--tf-brand))] hover:text-black px-3 py-1.5 rounded-sm transition-colors disabled:opacity-60"
+            >
+              {downloading ? "generating…" : "↓ download ROI report (PDF)"}
+            </button>
+            <button
+              data-testid="refresh-overview"
+              onClick={load}
+              className="text-xs font-mono border border-[rgb(var(--tf-border))] hover:border-[rgb(var(--tf-brand))] px-3 py-1.5 rounded-sm text-[rgb(var(--tf-text-2))] hover:text-white transition-colors"
+            >
+              ⟳ refresh
+            </button>
+          </div>
+        </div>
+
+        {/* Quota Meter */}
+        <div data-testid="quota-meter" className="mb-6 border border-[rgb(var(--tf-border))] bg-[rgb(var(--tf-bg-2))] p-5">
+          <div className="flex items-center justify-between mb-3 text-xs font-mono">
+            <span className="uppercase tracking-widest text-[rgb(var(--tf-text-muted))]">
+              MONTHLY QUOTA · {(user?.plan || "free").toUpperCase()}
+            </span>
+            <span className="text-[rgb(var(--tf-text-2))]">
+              <span data-testid="quota-used" className={
+                showBlock ? "text-[rgb(var(--tf-error))]" :
+                showWarn ? "text-[rgb(var(--tf-warning))]" :
+                "text-[rgb(var(--tf-success))]"
+              }>
+                {usage.tokens_used.toLocaleString()}
+              </span>
+              {" / "}
+              <span data-testid="quota-total">{usage.monthly_quota.toLocaleString()}</span>
+              {" tokens "}
+              <span className="text-[rgb(var(--tf-text-muted))]">({pct}%)</span>
+            </span>
+          </div>
+          <div className="h-2 bg-[rgb(var(--tf-bg-3))] rounded-sm overflow-hidden">
+            <div
+              className={`h-full transition-all duration-500 ${
+                showBlock ? "bg-[rgb(var(--tf-error))]" :
+                showWarn ? "bg-[rgb(var(--tf-warning))]" :
+                "bg-[rgb(var(--tf-success))]"
+              }`}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
         </div>
 
         {/* KPI Grid */}

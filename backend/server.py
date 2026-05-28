@@ -59,10 +59,14 @@ MODEL_PRICING_USD_PER_1K = {  # rough public list pricing (input tokens)
 }
 
 PLAN_PACKAGES = {
-    "starter": {"name": "Starter", "amount": 19.00, "currency": "usd", "monthly_quota": 1_000_000},
-    "pro": {"name": "Pro", "amount": 99.00, "currency": "usd", "monthly_quota": 10_000_000},
-    "enterprise": {"name": "Enterprise", "amount": 499.00, "currency": "usd", "monthly_quota": 100_000_000},
+    "starter": {"name": "Starter", "amount": 19.00, "annual_amount": 182.40, "currency": "usd", "monthly_quota": 1_000_000},
+    "pro": {"name": "Pro", "amount": 99.00, "annual_amount": 950.40, "currency": "usd", "monthly_quota": 10_000_000},
+    "enterprise": {"name": "Enterprise", "amount": 499.00, "annual_amount": 4790.40, "currency": "usd", "monthly_quota": 100_000_000},
 }
+ANNUAL_DISCOUNT_PCT = 20
+
+# Free tier quota — also used as default for new users
+FREE_TIER_QUOTA = 50_000
 
 # ------------------------------------------------------------------
 # DB
@@ -135,6 +139,7 @@ class CreateKeyIn(BaseModel):
 class CheckoutIn(BaseModel):
     plan_id: str
     origin_url: str
+    billing_cycle: str = "monthly"  # "monthly" | "annual"
 
 
 # ------------------------------------------------------------------
@@ -190,6 +195,46 @@ async def require_api_key(request: Request) -> dict:
     if not user:
         raise HTTPException(status_code=401, detail="API key owner missing")
     return {"user": user, "key": record}
+
+
+# ------------------------------------------------------------------
+# Quota helpers
+# ------------------------------------------------------------------
+def _period_start_iso() -> str:
+    """ISO string for the first day of the current UTC month at 00:00."""
+    now = _now()
+    start = datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+    return start.isoformat()
+
+
+async def get_user_usage(user_id: str) -> dict:
+    """Return current calendar month's billable token usage for the user."""
+    since = _period_start_iso()
+    pipeline = [
+        {"$match": {"user_id": user_id, "created_at": {"$gte": since}}},
+        {
+            "$group": {
+                "_id": None,
+                "original": {"$sum": "$original_tokens"},
+                "optimized": {"$sum": "$optimized_tokens"},
+                "completion": {"$sum": "$completion_tokens"},
+                "saved": {"$sum": "$tokens_saved"},
+                "requests": {"$sum": 1},
+            }
+        },
+    ]
+    rows = await db.proxy_requests.aggregate(pipeline).to_list(1)
+    if not rows:
+        return {"period_start": since, "tokens_used": 0, "requests": 0, "tokens_saved": 0}
+    r = rows[0]
+    # Billable usage = optimized (sent to provider) + completion (returned by provider).
+    used = int(r.get("optimized", 0)) + int(r.get("completion", 0))
+    return {
+        "period_start": since,
+        "tokens_used": used,
+        "requests": int(r.get("requests", 0)),
+        "tokens_saved": int(r.get("saved", 0)),
+    }
 
 
 # ------------------------------------------------------------------
@@ -268,7 +313,7 @@ async def register(body: RegisterIn):
         "name": body.name or email.split("@")[0],
         "role": "user",
         "plan": "free",
-        "monthly_quota": 50_000,
+        "monthly_quota": FREE_TIER_QUOTA,
         "created_at": _iso(),
     }
     await db.users.insert_one(doc)
@@ -311,7 +356,10 @@ async def login(body: LoginIn):
 
 @api.get("/auth/me")
 async def me(user=Depends(current_user)):
-    return user
+    usage = await get_user_usage(user["id"])
+    quota = int(user.get("monthly_quota") or FREE_TIER_QUOTA)
+    pct = round((usage["tokens_used"] / quota) * 100.0, 2) if quota else 0.0
+    return {**user, "usage": {**usage, "monthly_quota": quota, "percent_used": pct}}
 
 
 # ------------------------------------------------------------------
@@ -394,6 +442,18 @@ async def proxy_chat(body: ProxyIn, request: Request, auth=Depends(require_api_k
     key = auth["key"]
     original = body.prompt
     original_tokens = estimate_tokens(original)
+
+    # 0. Quota enforcement
+    quota = int(user.get("monthly_quota") or FREE_TIER_QUOTA)
+    usage = await get_user_usage(user["id"])
+    if usage["tokens_used"] >= quota:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Monthly quota exceeded ({usage['tokens_used']}/{quota} tokens). "
+                f"Upgrade your plan to continue."
+            ),
+        )
 
     # 1. Optimize
     opt = optimize(original) if body.optimize else None
@@ -565,16 +625,212 @@ async def dashboard_logs(limit: int = 25, user=Depends(current_user)):
 
 
 # ------------------------------------------------------------------
+# ROI Savings Report (PDF)
+# ------------------------------------------------------------------
+@api.get("/reports/savings.pdf")
+async def savings_report_pdf(user=Depends(current_user)):
+    """Generates a branded ROI Savings Report PDF for the current calendar month."""
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from reportlab.pdfgen import canvas
+
+    # Aggregate (lifetime + current month)
+    user_id = user["id"]
+    lifetime_pipe = [
+        {"$match": {"user_id": user_id}},
+        {
+            "$group": {
+                "_id": None,
+                "requests": {"$sum": 1},
+                "saved": {"$sum": "$tokens_saved"},
+                "original": {"$sum": "$original_tokens"},
+                "cost_saved": {"$sum": "$cost_saved_usd"},
+                "cache_hits": {"$sum": {"$cond": ["$cache_hit", 1, 0]}},
+            }
+        },
+    ]
+    lt = await db.proxy_requests.aggregate(lifetime_pipe).to_list(1)
+    lt = lt[0] if lt else {"requests": 0, "saved": 0, "original": 0, "cost_saved": 0.0, "cache_hits": 0}
+
+    since = _period_start_iso()
+    month_pipe = [
+        {"$match": {"user_id": user_id, "created_at": {"$gte": since}}},
+        {
+            "$group": {
+                "_id": None,
+                "requests": {"$sum": 1},
+                "saved": {"$sum": "$tokens_saved"},
+                "original": {"$sum": "$original_tokens"},
+                "cost_saved": {"$sum": "$cost_saved_usd"},
+            }
+        },
+    ]
+    mo = await db.proxy_requests.aggregate(month_pipe).to_list(1)
+    mo = mo[0] if mo else {"requests": 0, "saved": 0, "original": 0, "cost_saved": 0.0}
+
+    # Per-model breakdown (lifetime)
+    model_pipe = [
+        {"$match": {"user_id": user_id}},
+        {
+            "$group": {
+                "_id": "$model",
+                "requests": {"$sum": 1},
+                "saved": {"$sum": "$tokens_saved"},
+                "cost_saved": {"$sum": "$cost_saved_usd"},
+            }
+        },
+        {"$sort": {"cost_saved": -1}},
+    ]
+    model_rows = await db.proxy_requests.aggregate(model_pipe).to_list(20)
+
+    # Build PDF
+    buf = BytesIO()
+    c = canvas.Canvas(buf, pagesize=LETTER)
+    W, H = LETTER
+    margin = 0.6 * inch
+
+    # Header
+    c.setFillColor(colors.HexColor("#0A0A0A"))
+    c.rect(0, H - 1.4 * inch, W, 1.4 * inch, fill=1, stroke=0)
+    c.setFillColor(colors.HexColor("#FF4500"))
+    c.rect(margin, H - 0.85 * inch, 0.34 * inch, 0.34 * inch, fill=1, stroke=0)
+    c.setFillColor(colors.white)
+    c.setFont("Helvetica-Bold", 9)
+    c.drawString(margin + 0.07 * inch, H - 0.74 * inch, "TF")
+    c.setFont("Helvetica-Bold", 22)
+    c.drawString(margin + 0.55 * inch, H - 0.7 * inch, "TokenForge")
+    c.setFont("Helvetica", 9)
+    c.setFillColor(colors.HexColor("#A1A1AA"))
+    c.drawString(margin + 0.55 * inch, H - 0.88 * inch, "ROI SAVINGS REPORT")
+    c.setFont("Helvetica", 8)
+    c.drawRightString(W - margin, H - 0.7 * inch, datetime.now(timezone.utc).strftime("%B %Y"))
+    c.drawRightString(W - margin, H - 0.85 * inch, user["email"])
+
+    # Title
+    y = H - 1.9 * inch
+    c.setFillColor(colors.HexColor("#0A0A0A"))
+    c.setFont("Helvetica-Bold", 26)
+    c.drawString(margin, y, "Monthly Savings Summary")
+    y -= 0.16 * inch
+    c.setFillColor(colors.HexColor("#71717A"))
+    c.setFont("Helvetica", 10)
+    c.drawString(margin, y, f"Period: {since[:10]} → today  ·  Account: {user.get('name') or user['email']}  ·  Plan: {user.get('plan', 'free')}")
+
+    # KPI grid (2x2)
+    y -= 0.5 * inch
+    box_w = (W - margin * 2 - 0.2 * inch) / 2
+    box_h = 1.1 * inch
+    kpis = [
+        ("TOKENS SAVED (MONTH)", f"{int(mo['saved']):,}", "#00E676"),
+        ("$ SAVED (MONTH)", f"${float(mo['cost_saved']):.4f}", "#FF4500"),
+        ("TOKENS SAVED (LIFETIME)", f"{int(lt['saved']):,}", "#FAFAFA"),
+        ("$ SAVED (LIFETIME)", f"${float(lt['cost_saved']):.4f}", "#FAFAFA"),
+    ]
+    for i, (label, value, color) in enumerate(kpis):
+        col = i % 2
+        row = i // 2
+        bx = margin + col * (box_w + 0.2 * inch)
+        by = y - (row + 1) * box_h - row * 0.15 * inch
+        c.setStrokeColor(colors.HexColor("#27272A"))
+        c.setLineWidth(0.6)
+        c.rect(bx, by, box_w, box_h, fill=0, stroke=1)
+        c.setFillColor(colors.HexColor("#71717A"))
+        c.setFont("Helvetica", 8)
+        c.drawString(bx + 0.18 * inch, by + box_h - 0.28 * inch, label)
+        c.setFillColor(colors.HexColor(color))
+        c.setFont("Helvetica-Bold", 24)
+        c.drawString(bx + 0.18 * inch, by + 0.28 * inch, value)
+
+    # Avg % saved
+    y -= (box_h * 2 + 0.55 * inch)
+    avg_pct = 0
+    if lt["original"]:
+        avg_pct = round((lt["saved"] / lt["original"]) * 100.0, 2)
+    cache_pct = 0
+    if lt["requests"]:
+        cache_pct = round((lt["cache_hits"] / lt["requests"]) * 100.0, 2)
+    c.setFillColor(colors.HexColor("#0A0A0A"))
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(margin, y, "Efficiency")
+    y -= 0.25 * inch
+    c.setFont("Helvetica", 10)
+    c.setFillColor(colors.HexColor("#27272A"))
+    c.drawString(margin, y, f"Average compression:  {avg_pct}%   ·   Semantic cache hit rate:  {cache_pct}%   ·   Total requests:  {int(lt['requests']):,}")
+
+    # Per-model table
+    y -= 0.4 * inch
+    c.setFillColor(colors.HexColor("#0A0A0A"))
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(margin, y, "Savings by Model (Lifetime)")
+    y -= 0.25 * inch
+    c.setStrokeColor(colors.HexColor("#27272A"))
+    c.line(margin, y + 0.05 * inch, W - margin, y + 0.05 * inch)
+    c.setFont("Helvetica-Bold", 9)
+    c.setFillColor(colors.HexColor("#71717A"))
+    c.drawString(margin, y - 0.18 * inch, "MODEL")
+    c.drawString(margin + 3.0 * inch, y - 0.18 * inch, "REQUESTS")
+    c.drawString(margin + 4.3 * inch, y - 0.18 * inch, "TOKENS SAVED")
+    c.drawRightString(W - margin, y - 0.18 * inch, "$ SAVED")
+    y -= 0.42 * inch
+    if not model_rows:
+        c.setFont("Helvetica-Oblique", 10)
+        c.setFillColor(colors.HexColor("#71717A"))
+        c.drawString(margin, y, "No proxy calls recorded yet.")
+    else:
+        c.setFont("Helvetica", 10)
+        c.setFillColor(colors.HexColor("#0A0A0A"))
+        for r in model_rows[:8]:
+            c.drawString(margin, y, str(r.get("_id") or "—")[:48])
+            c.drawString(margin + 3.0 * inch, y, f"{int(r.get('requests', 0)):,}")
+            c.drawString(margin + 4.3 * inch, y, f"{int(r.get('saved', 0)):,}")
+            c.drawRightString(W - margin, y, f"${float(r.get('cost_saved', 0.0)):.4f}")
+            y -= 0.22 * inch
+            c.setStrokeColor(colors.HexColor("#F0F0F0"))
+            c.line(margin, y + 0.08 * inch, W - margin, y + 0.08 * inch)
+
+    # Footer
+    c.setFillColor(colors.HexColor("#A1A1AA"))
+    c.setFont("Helvetica", 8)
+    c.drawString(margin, 0.5 * inch, "Generated by TokenForge — distill or perish.  ·  tokenforge.io")
+    c.drawRightString(W - margin, 0.5 * inch, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    fname = f"tokenforge-savings-{datetime.now(timezone.utc).strftime('%Y%m')}.pdf"
+    return StreamingResponse(
+        buf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+# ------------------------------------------------------------------
 # Billing (Stripe Checkout)
 # ------------------------------------------------------------------
 @api.get("/billing/plans")
 async def list_plans():
-    return {
-        "plans": [
-            {"id": pid, **{k: v for k, v in p.items() if k != "currency"}}
-            for pid, p in PLAN_PACKAGES.items()
-        ]
-    }
+    plans = []
+    # Always expose free tier for FE (no Stripe).
+    plans.append({
+        "id": "free",
+        "name": "Free",
+        "amount": 0.0,
+        "annual_amount": 0.0,
+        "monthly_quota": FREE_TIER_QUOTA,
+    })
+    for pid, p in PLAN_PACKAGES.items():
+        plans.append({
+            "id": pid,
+            "name": p["name"],
+            "amount": p["amount"],
+            "annual_amount": p["annual_amount"],
+            "monthly_quota": p["monthly_quota"],
+        })
+    return {"plans": plans, "annual_discount_pct": ANNUAL_DISCOUNT_PCT}
 
 
 @api.post("/billing/checkout")
@@ -582,6 +838,8 @@ async def create_checkout(body: CheckoutIn, request: Request, user=Depends(curre
     plan = PLAN_PACKAGES.get(body.plan_id)
     if not plan:
         raise HTTPException(status_code=400, detail="Invalid plan")
+    cycle = body.billing_cycle if body.billing_cycle in ("monthly", "annual") else "monthly"
+    amount = float(plan["annual_amount"] if cycle == "annual" else plan["amount"])
     origin = body.origin_url.rstrip("/")
     success_url = f"{origin}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{origin}/pricing"
@@ -589,7 +847,7 @@ async def create_checkout(body: CheckoutIn, request: Request, user=Depends(curre
     webhook_url = f"{host_url}api/webhook/stripe"
     stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
     req = CheckoutSessionRequest(
-        amount=float(plan["amount"]),
+        amount=amount,
         currency="usd",
         success_url=success_url,
         cancel_url=cancel_url,
@@ -597,6 +855,7 @@ async def create_checkout(body: CheckoutIn, request: Request, user=Depends(curre
             "user_id": user["id"],
             "user_email": user["email"],
             "plan_id": body.plan_id,
+            "billing_cycle": cycle,
             "source": "tokenforge_dashboard",
         },
     )
@@ -608,15 +867,16 @@ async def create_checkout(body: CheckoutIn, request: Request, user=Depends(curre
             "user_email": user["email"],
             "session_id": session.session_id,
             "plan_id": body.plan_id,
-            "amount": plan["amount"],
+            "billing_cycle": cycle,
+            "amount": amount,
             "currency": "usd",
             "payment_status": "pending",
             "status": "open",
-            "metadata": {"plan_id": body.plan_id},
+            "metadata": {"plan_id": body.plan_id, "billing_cycle": cycle},
             "created_at": _iso(),
         }
     )
-    return {"url": session.url, "session_id": session.session_id}
+    return {"url": session.url, "session_id": session.session_id, "amount": amount, "billing_cycle": cycle}
 
 
 @api.get("/billing/status/{session_id}")
@@ -637,7 +897,7 @@ async def checkout_status(session_id: str, request: Request, user=Depends(curren
             {"$set": {"payment_status": "paid", "status": status_resp.status}},
         )
         plan_id = tx.get("plan_id", "starter")
-        new_quota = PLAN_PACKAGES.get(plan_id, {}).get("monthly_quota", 50_000)
+        new_quota = PLAN_PACKAGES.get(plan_id, {}).get("monthly_quota", FREE_TIER_QUOTA)
         await db.users.update_one(
             {"id": user["id"]},
             {"$set": {"plan": plan_id, "monthly_quota": new_quota}},
@@ -677,7 +937,7 @@ async def stripe_webhook(request: Request):
             plan_id = (ev.metadata or {}).get("plan_id", "starter")
             user_id = (ev.metadata or {}).get("user_id")
             if user_id:
-                new_quota = PLAN_PACKAGES.get(plan_id, {}).get("monthly_quota", 50_000)
+                new_quota = PLAN_PACKAGES.get(plan_id, {}).get("monthly_quota", FREE_TIER_QUOTA)
                 await db.users.update_one(
                     {"id": user_id},
                     {"$set": {"plan": plan_id, "monthly_quota": new_quota}},
