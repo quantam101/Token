@@ -73,6 +73,7 @@ export default function Docs() {
           <DocLink href="#optimize">/optimize</DocLink>
           <DocLink href="#models">Supported models</DocLink>
           <DocLink href="#errors">Errors</DocLink>
+          <DocLink href="#embed">Embed widget</DocLink>
         </aside>
 
         <article className="prose prose-invert max-w-none">
@@ -181,6 +182,24 @@ export default function Docs() {
               ["400", "Validation error (see detail)"],
               ["502", "Upstream LLM provider error"],
             ]} />
+          </Section>
+
+          <Section id="embed" title="Embed widget">
+            <p className="text-[rgb(var(--tf-text-2))]">
+              Show your live TokenForge savings on any site. First create a share link from your dashboard (
+              <a href="/dashboard" className="text-[rgb(var(--tf-brand))]">Share my savings</a> button), open the public
+              share page, click <b>Embed this widget</b>, and copy the snippet.
+            </p>
+            <pre className="bg-[rgb(var(--tf-bg-3))] border border-[rgb(var(--tf-border))] rounded-md p-4 font-mono text-sm whitespace-pre overflow-x-auto">{`<script src="${origin}/api/widget.js"
+        data-tf-slug="YOUR_SHARE_SLUG"
+        data-tf-theme="dark"
+        async defer></script>`}</pre>
+            <p className="text-[rgb(var(--tf-text-2))] text-sm">
+              Accepted attributes: <code className="font-mono text-[rgb(var(--tf-brand))]">data-tf-slug</code> (required),
+              <code className="font-mono text-[rgb(var(--tf-brand))]"> data-tf-theme</code> = <code>dark</code>|<code>light</code>,
+              <code className="font-mono text-[rgb(var(--tf-brand))]"> data-tf-width</code>,
+              <code className="font-mono text-[rgb(var(--tf-brand))]"> data-tf-height</code>. The iframe auto-resizes via <code>postMessage</code>.
+            </p>
           </Section>
         </article>
       </main>

@@ -992,18 +992,191 @@ async def get_share_data(slug: str):
     if not rec:
         raise HTTPException(status_code=404, detail="Share link not found")
     agg = await _aggregate_savings(rec["user_id"])
+    lt = agg["lifetime"]
+    # Cap displayed compression at 100% — cache hits inflate `saved` above `original` since
+    # we credit completion tokens too, which is correct for $-saved but misleading as a %.
+    avg_pct = 0.0
+    if lt.get("original"):
+        avg_pct = min(100.0, round((lt["saved"] / lt["original"]) * 100.0, 2))
     return {
         "display_name": rec.get("display_name"),
         "created_at": rec.get("created_at"),
-        "tokens_saved": int(agg["lifetime"].get("saved", 0)),
-        "cost_saved_usd": round(float(agg["lifetime"].get("cost_saved", 0.0)), 4),
-        "requests": int(agg["lifetime"].get("requests", 0)),
-        "avg_compression_pct": (
-            round((agg["lifetime"]["saved"] / agg["lifetime"]["original"]) * 100.0, 2)
-            if agg["lifetime"].get("original")
-            else 0
-        ),
+        "tokens_saved": int(lt.get("saved", 0)),
+        "cost_saved_usd": round(float(lt.get("cost_saved", 0.0)), 4),
+        "requests": int(lt.get("requests", 0)),
+        "avg_compression_pct": avg_pct,
     }
+
+
+# ------------------------------------------------------------------
+# Embeddable savings widget — JS loader + iframe target
+# ------------------------------------------------------------------
+@api.get("/widget.js")
+async def widget_loader():
+    """Tiny JS shim hosts paste into their site to render a live savings widget.
+
+    Usage on host site:
+        <script src="https://tokenforge.io/api/widget.js"
+                data-tf-slug="abc123" data-tf-theme="dark"
+                async defer></script>
+    The script finds its own <script> tag (currentScript), reads data attrs,
+    and injects an iframe pointing at /embed/<slug>?theme=<theme>.
+    """
+    from fastapi.responses import Response
+
+    js = """(function(){
+  try {
+    var s = document.currentScript || (function(){
+      var all = document.getElementsByTagName('script');
+      return all[all.length - 1];
+    })();
+    if (!s || s.getAttribute('data-tf-injected') === '1') return;
+    s.setAttribute('data-tf-injected', '1');
+
+    var slug = s.getAttribute('data-tf-slug');
+    if (!slug) { console.warn('[TokenForge widget] missing data-tf-slug'); return; }
+    var theme = s.getAttribute('data-tf-theme') || 'dark';
+    var width = s.getAttribute('data-tf-width') || '100%';
+    var height = s.getAttribute('data-tf-height') || '180';
+    var origin = new URL(s.src).origin;
+
+    var iframe = document.createElement('iframe');
+    iframe.src = origin + '/embed/' + encodeURIComponent(slug) + '?theme=' + encodeURIComponent(theme);
+    iframe.setAttribute('title', 'TokenForge savings — live counter');
+    iframe.setAttribute('loading', 'lazy');
+    iframe.style.cssText = 'border:0;width:' + (isFinite(width) ? width + 'px' : width) +
+                          ';height:' + (isFinite(height) ? height + 'px' : height) +
+                          ';max-width:100%;display:block;border-radius:8px;overflow:hidden;background:transparent;';
+    iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups');
+
+    s.parentNode.insertBefore(iframe, s);
+
+    // Auto-resize via postMessage from the iframe
+    window.addEventListener('message', function(ev) {
+      if (!ev || !ev.data || ev.data.tf !== 'resize' || ev.data.slug !== slug) return;
+      if (typeof ev.data.height === 'number' && ev.data.height > 0) {
+        iframe.style.height = ev.data.height + 'px';
+      }
+    });
+  } catch (e) {
+    console.error('[TokenForge widget] init failed', e);
+  }
+})();"""
+    return Response(
+        content=js,
+        media_type="application/javascript; charset=utf-8",
+        headers={
+            "Cache-Control": "public, max-age=300",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+@app.get("/embed/{slug}")
+async def embed_page(slug: str, request: Request, theme: str = "dark"):
+    """Standalone iframe-ready HTML that renders the live savings counter."""
+    from fastapi.responses import HTMLResponse
+
+    rec = await db.share_links.find_one({"slug": slug}, {"_id": 0})
+    if not rec:
+        html_404 = """<!doctype html><meta charset=utf-8><title>TokenForge</title>
+<style>html,body{margin:0;background:#0A0A0A;color:#A1A1AA;font:13px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;}</style>
+<div>This TokenForge widget link is no longer active.</div>"""
+        return HTMLResponse(html_404, status_code=404)
+
+    agg = await _aggregate_savings(rec["user_id"])
+    tokens_saved = int(agg["lifetime"].get("saved", 0))
+    cost_saved = round(float(agg["lifetime"].get("cost_saved", 0.0)), 4)
+    requests_count = int(agg["lifetime"].get("requests", 0))
+    avg_pct = 0.0
+    if agg["lifetime"].get("original"):
+        avg_pct = min(100.0, round((agg["lifetime"]["saved"] / agg["lifetime"]["original"]) * 100.0, 2))
+    display_name = rec.get("display_name") or "A TokenForge customer"
+
+    is_light = theme == "light"
+    bg = "#FFFFFF" if is_light else "#0A0A0A"
+    card_bg = "#F6F6F7" if is_light else "#121212"
+    border = "#E4E4E7" if is_light else "#27272A"
+    text = "#0A0A0A" if is_light else "#FAFAFA"
+    muted = "#71717A"
+    accent = "#FF4500"
+    success = "#00B85B" if is_light else "#00E676"
+
+    home_origin = str(request.base_url).rstrip("/")
+    share_url = f"{home_origin}/share/{slug}"
+
+    html = f"""<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>TokenForge savings — {display_name}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@500;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+  *{{box-sizing:border-box}}
+  html,body{{margin:0;padding:0;background:{bg};color:{text};font:14px/1.4 'IBM Plex Sans',-apple-system,Segoe UI,Roboto,sans-serif;-webkit-font-smoothing:antialiased}}
+  .wrap{{padding:14px;display:block}}
+  .card{{background:{card_bg};border:1px solid {border};border-radius:8px;padding:16px 18px;display:block;text-decoration:none;color:inherit;position:relative;overflow:hidden}}
+  .top{{display:flex;align-items:center;gap:10px;margin-bottom:12px}}
+  .logo{{width:22px;height:22px;background:{accent};color:#000;font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center;border-radius:4px;letter-spacing:-0.5px}}
+  .brand{{font-weight:700;letter-spacing:-0.3px}}
+  .badge{{margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:{muted}}}
+  .grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px}}
+  .kpi{{background:{bg};border:1px solid {border};border-radius:6px;padding:10px 12px}}
+  .kpi .l{{font:500 9px/1 'IBM Plex Mono',monospace;letter-spacing:0.18em;text-transform:uppercase;color:{muted};margin-bottom:4px}}
+  .kpi .v{{font-weight:700;font-size:18px;letter-spacing:-0.5px;font-variant-numeric:tabular-nums}}
+  .v.success{{color:{success}}}
+  .v.accent{{color:{accent}}}
+  .row{{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:{muted}}}
+  .row a{{color:{accent};text-decoration:none;font-weight:500;font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:0.08em;text-transform:uppercase}}
+  .row a:hover{{text-decoration:underline}}
+</style>
+</head>
+<body>
+  <div class="wrap" id="root">
+    <a class="card" href="{share_url}" target="_blank" rel="noopener">
+      <div class="top">
+        <div class="logo">TF</div>
+        <div class="brand">TokenForge</div>
+        <div class="badge">LIVE · {display_name}</div>
+      </div>
+      <div class="grid">
+        <div class="kpi"><div class="l">TOKENS SAVED</div><div class="v success">{tokens_saved:,}</div></div>
+        <div class="kpi"><div class="l">$ SAVED</div><div class="v accent">${cost_saved:.4f}</div></div>
+        <div class="kpi"><div class="l">REQUESTS</div><div class="v">{requests_count:,}</div></div>
+      </div>
+      <div class="row">
+        <span>Avg compression: <b style="color:{text}">{avg_pct}%</b></span>
+        <span>Powered by TokenForge →</span>
+      </div>
+    </a>
+  </div>
+<script>
+  (function(){{
+    var slug = {slug!r};
+    function post(){{
+      try {{
+        var h = document.getElementById('root').getBoundingClientRect().height + 4;
+        window.parent && window.parent.postMessage({{ tf: 'resize', slug: slug, height: h }}, '*');
+      }} catch (e) {{}}
+    }}
+    window.addEventListener('load', post);
+    window.addEventListener('resize', post);
+    setTimeout(post, 60);
+  }})();
+</script>
+</body></html>"""
+    return HTMLResponse(
+        content=html,
+        status_code=200,
+        headers={
+            "Cache-Control": "public, max-age=60",
+            "X-Frame-Options": "ALLOWALL",
+            "Content-Security-Policy": "frame-ancestors *",
+        },
+    )
 
 
 # ------------------------------------------------------------------
