@@ -20,11 +20,15 @@ PY_VER="3.11"
 echo "==> [1/9] Updating apt + installing system deps"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
+apt-get install -y -qq software-properties-common
+# Python 3.11 isn't in Ubuntu 22.04 default repos — add the deadsnakes PPA
+add-apt-repository -y ppa:deadsnakes/ppa
+apt-get update -qq
 apt-get install -y -qq \
   curl wget gnupg lsb-release ca-certificates \
   python${PY_VER} python${PY_VER}-venv python${PY_VER}-dev \
   build-essential nginx certbot python3-certbot-nginx \
-  ufw
+  ufw git
 
 echo "==> [2/9] Adding 2 GB swap (E2.1.Micro has 1 GB RAM — Mongo will OOM without swap)"
 if [ ! -f /swapfile ]; then
