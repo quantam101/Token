@@ -120,9 +120,22 @@ After that:
 
 ### P0 — Pre-launch hardening
 - [x] Verify `alreadyherellc.com` domain in Resend (DONE — iter-13)
-- [x] Pin CORS `allow_origins` to explicit production origins (DONE — iter-11)
-- [ ] Rotate `RESEND_API_KEY` to a LIVE/full-access key to unlock delivery to ANY recipient (current key is test-mode — only delivers to verified-domain recipients)
-- [ ] Migrate rate-limit buckets to Redis once we scale beyond uvicorn single-worker
+- [x] Pin CORS `allow_origins` to explicit production origins (DONE — iter-11, expanded iter-16)
+- [x] Remove all Emergent code/branding from shipped surface (DONE — iter-16)
+- [x] BYOK as Pro+ paid upsell with encrypted vault (DONE — iter-14b)
+- [x] LLM router fix — confirmed customer BYOK keys actually used (DONE — iter-15)
+- [ ] Rotate every secret pasted in chat (USER action)
+- [ ] Enable Apple Pay + Google Pay in Stripe dashboard (USER action, 10 sec)
+- [ ] Fund Google Gemini billing (free tier = 20 req/day, will choke real users)
+- [ ] Deploy: OCI Always-Free + Vercel per `/app/deploy/DEPLOY_OCI.md`
+
+### Iter-16 — Full Emergent scrub (pre-sale validation) ✅
+- **All Emergent surface area removed** from shipped code: badge, PostHog telemetry, `emergent-main.js` script, `@emergentbase/visual-edits` dev dep, Emergent CDN hero image, deprecated `EMERGENT_LLM_KEY` constant — all gone.
+- **Hero is now CSS-only** (radial spotlight + orange beam grid).
+- **`public/index.html` is minimal** — meta tags + fonts + root div only.
+- **Test result (iter-16)**: 0 forbidden tokens across served HTML + 11 rendered routes; `window.posthog` undefined; `#emergent-badge` count 0; `import emergentintegrations` → ModuleNotFoundError.
+- **Critical regression intact**: BYOK negative-test confirms customer keys are actually used (bogus key → 502); Stripe LIVE checkout, PDF reports, webhook signing, encryption-at-rest all PASS.
+- **22/23 PASS, 1 SKIP** (transient Gemini 503, not a code bug). Frontend: 100% (all 11 routes + scrub checks pass).
 
 ### P1 — Revenue + retention
 - [ ] Cron job to auto-email monthly ROI report on the 1st of each month
