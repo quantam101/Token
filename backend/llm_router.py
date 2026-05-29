@@ -1,12 +1,14 @@
 """
-TokenForge LLM Router — drop-in replacement for emergentintegrations.llm.chat.
+TokenForge LLM Router — async multi-provider LLM client supporting
+OpenAI, Anthropic, and Google Gemini via their official Python SDKs.
 
-Routes async LLM calls to OpenAI, Anthropic, or Google Gemini using their
-official Python SDKs. No Emergent runtime dependency.
-
-API parity with the previous LlmChat:
-    chat = LlmChat(api_key=..., session_id=..., system_message=...).with_model(provider, model)
+API:
+    chat = LlmChat(session_id=..., system_message=..., byok_keys={...}).with_model(provider, model)
     response_text: str = await chat.send_message(UserMessage(text="..."))
+
+byok_keys: optional dict of customer-supplied provider keys (Pro+ feature).
+When present, the matching provider call uses the customer key instead of
+the platform env key.
 """
 
 from __future__ import annotations
@@ -71,10 +73,10 @@ def _get_gemini():
     return _gemini_client
 
 
-# Map Emergent-style aliases to real provider model identifiers.
+# Provider model aliases — keeps the public proxy API stable while letting us
+# swap the actual SDK model identifier server-side (e.g. when a vendor renames).
 _MODEL_ALIASES = {
     "anthropic": {
-        # Emergent used these short tags — map to current Anthropic SDK strings.
         "claude-sonnet-4-6": "claude-sonnet-4-5",
         "claude-sonnet-4-5": "claude-sonnet-4-5",
         "claude-opus-4-5": "claude-opus-4-5",
@@ -103,7 +105,7 @@ def _resolve_model(provider: str, model: str) -> str:
 
 
 class UserMessage(BaseModel):
-    """Compatibility wrapper — mirrors emergentintegrations.llm.chat.UserMessage."""
+    """Single-turn user message wrapper."""
     text: str
 
 
@@ -111,9 +113,8 @@ class LlmChat:
     """
     Async LLM chat client routed to OpenAI / Anthropic / Google Gemini.
 
-    Drop-in for emergentintegrations.llm.chat.LlmChat:
-        - constructor takes api_key, session_id, system_message (api_key is ignored;
-          provider-specific keys come from env)
+    Usage:
+        - constructor takes session_id, system_message, optional byok_keys dict
         - .with_model(provider, model_name) selects the provider
         - .send_message(UserMessage(text=...)) returns plain str
     """

@@ -1,9 +1,7 @@
 """
-TokenForge Stripe Service — drop-in replacement for
-emergentintegrations.payments.stripe.checkout.
+TokenForge Stripe Service — async wrapper around the official Stripe Python SDK.
 
-Wraps the official Stripe Python SDK in async methods. Preserves the
-attribute-access response shapes used by server.py:
+Preserves the attribute-access response shapes used by server.py:
 
     session = await stripe_checkout.create_checkout_session(req)
     session.session_id, session.url
@@ -38,14 +36,12 @@ class CheckoutSessionRequest(BaseModel):
     success_url: str
     cancel_url: str
     metadata: Dict[str, str] = Field(default_factory=dict)
-    # The original emergent flow always produced a single ad-hoc one-time
-    # line item — we keep that semantic by default.
+    # We always produce a single ad-hoc one-time line item.
     product_name: Optional[str] = None
 
 
 class _Obj:
-    """Lightweight attribute-bag so callers can use dot access exactly as
-    they did with the prior SDK."""
+    """Lightweight attribute-bag so callers can use dot access on responses."""
 
     def __init__(self, **kw):
         for k, v in kw.items():

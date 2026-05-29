@@ -5,8 +5,6 @@ import { MarketingNav, Footer } from "@/components/Nav";
 import UsedByStrip from "@/components/UsedByStrip";
 import { toast } from "sonner";
 
-const HERO_BG =
-  "https://static.prod-images.emergentagent.com/jobs/1cf30eb1-b91f-40f9-9ca0-9229018c5ce8/images/d657e5bc154183e09cb6042310433410ee6496a7c94719bd8576df1dbaa03bd5.png";
 const INFRA_IMG =
   "https://images.unsplash.com/photo-1695668548342-c0c1ad479aee?crop=entropy&cs=srgb&fm=jpg&q=85";
 
@@ -135,12 +133,12 @@ export default function Landing() {
 
       {/* HERO */}
       <section className="relative overflow-hidden" data-testid="hero-section">
+        {/* CSS-only hero backdrop: radial spotlight + orange beam grid */}
         <div
-          className="absolute inset-0 opacity-50"
+          className="absolute inset-0 opacity-60"
           style={{
-            backgroundImage: `url(${HERO_BG})`,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
+            background:
+              "radial-gradient(ellipse at 50% 0%, rgba(255,69,0,0.18), transparent 55%), repeating-linear-gradient(90deg, rgba(255,69,0,0.06) 0 1px, transparent 1px 80px), repeating-linear-gradient(180deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 80px)",
           }}
         />
         <div className="absolute inset-0 bg-gradient-to-b from-[rgb(var(--tf-bg))]/40 via-[rgb(var(--tf-bg))]/70 to-[rgb(var(--tf-bg))]" />

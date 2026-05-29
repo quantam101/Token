@@ -55,7 +55,6 @@ from email_service import (
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = "HS256"
 ACCESS_TTL_MIN = 60 * 24  # 24h
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")  # legacy; no longer used at runtime
 STRIPE_API_KEY = os.environ["STRIPE_API_KEY"]
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@tokenforge.io")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin")
