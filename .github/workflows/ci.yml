@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, "emergent-agent-*"]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  # ── 1. Backend: lint ──────────────────────────────────────────────────────────
+  backend-lint:
+    name: 1 · Backend lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: ruff check
+        run: ruff check backend/ --ignore E501,E402,F401
+
+      - name: ruff format check
+        run: ruff format --check backend/ || true
+
+  # ── 2. Frontend: build ────────────────────────────────────────────────────────
+  frontend-build:
+    name: 2 · Frontend build (yarn)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+        working-directory: frontend
+
+      - name: Build
+        run: yarn build
+        working-directory: frontend
+        env:
+          REACT_APP_BACKEND_URL: https://api.alreadyherellc.com
+          CI: false  # CRA treats warnings as errors when CI=true
+
+  # ── 3. Integration tests (live API) ──────────────────────────────────────────
+  # Runs only when TOKENFORGE_API_URL secret is set (i.e., backend is deployed).
+  integration-tests:
+    name: 3 · Integration tests (live API)
+    runs-on: ubuntu-latest
+    if: ${{ secrets.TOKENFORGE_API_URL != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install test dependencies
+        run: pip install pytest requests python-dotenv
+
+      - name: Run integration tests
+        run: pytest backend/tests/test_tokenforge_backend.py -v --tb=short
+        env:
+          REACT_APP_BACKEND_URL: ${{ secrets.TOKENFORGE_API_URL }}
