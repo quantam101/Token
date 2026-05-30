@@ -1,6 +1,7 @@
 """Iter-5 regression smoke — confirm core endpoints work (with XFF to avoid rate limits)."""
 import os, uuid, secrets
-import pytest, requests
+import pytest
+import requests
 from dotenv import load_dotenv
 load_dotenv("/app/frontend/.env")
 BASE = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
