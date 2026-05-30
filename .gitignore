@@ -3,6 +3,11 @@
 # ── Emergent agent files (never commit) ──────────────────────────────────────
 .gitconfig
 .emergent/
+memory/
+test_reports/
+test_result.md
+design_guidelines.json
+tests/__init__.py
 
 # ── IDE and editors ───────────────────────────────────────────────────────────
 .idea/
@@ -81,6 +86,3 @@ agenthub/agents/youtube/db
 
 # ── Frontend cache ────────────────────────────────────────────────────────────
 frontend/node_modules/.cache/
-
-# ── Test credentials ──────────────────────────────────────────────────────────
-memory/test_credentials.md
