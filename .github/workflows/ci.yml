@@ -49,26 +49,21 @@ jobs:
         working-directory: frontend
         env:
           REACT_APP_BACKEND_URL: https://api.alreadyherellc.com
-          CI: false  # CRA treats warnings as errors when CI=true
+          CI: "false"
 
   # ── 3. Integration tests (live API) ──────────────────────────────────────────
-  # Runs only when TOKENFORGE_API_URL secret is set (i.e., backend is deployed).
-  integration-tests:
-    name: 3 · Integration tests (live API)
-    runs-on: ubuntu-latest
-    if: ${{ secrets.TOKENFORGE_API_URL != '' }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install test dependencies
-        run: pip install pytest requests python-dotenv
-
-      - name: Run integration tests
-        run: pytest backend/tests/test_tokenforge_backend.py -v --tb=short
-        env:
-          REACT_APP_BACKEND_URL: ${{ secrets.TOKENFORGE_API_URL }}
+  # NOTE: Add TOKENFORGE_API_URL to GitHub Secrets after deploying the backend,
+  # then uncomment this job to enable integration tests.
+  #
+  # integration-tests:
+  #   name: 3 · Integration tests (live API)
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: "3.11"
+  #     - run: pip install pytest requests python-dotenv
+  #     - run: pytest backend/tests/test_tokenforge_backend.py -v --tb=short
+  #       env:
+  #         REACT_APP_BACKEND_URL: ${{ secrets.TOKENFORGE_API_URL }}
