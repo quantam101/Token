@@ -86,3 +86,9 @@ agenthub/agents/youtube/db
 
 # ── Frontend cache ────────────────────────────────────────────────────────────
 frontend/node_modules/.cache/
+
+# ── ASI Engine ────────────────────────────────────────────────────────────────
+patches/
+canary_*.py
+bare_metal_fabric.bin
+enterprise_workload.py
