@@ -72,7 +72,7 @@ def test_register_login_me_throwaway():
 def _get_api_key(tok):
     r = requests.get(f"{API}/keys", headers=_bearer(tok))
     assert r.status_code == 200
-    keys = r.json().get("keys", [])
+    _ = r.json().get("keys", [])  # noqa: F841
     # Look for a full plaintext key (just-created keys carry 'plaintext' / 'key' field once)
     # otherwise issue a new one.
     r = requests.post(f"{API}/keys",
