@@ -108,7 +108,7 @@ class TestEmbedPagePublic:
         body = r.text
         # Find the "Avg compression: <b ...>X%</b>" value
         m = re.search(r"Avg compression:\s*<b[^>]*>([\d.]+)%</b>", body)
-        assert m, f"avg_pct field not found in embed body (likely served by frontend SPA, not FastAPI)"
+        assert m, "avg_pct field not found in embed body (likely served by frontend SPA, not FastAPI)"
         val = float(m.group(1))
         assert val <= 100.0, f"avg_pct {val} exceeds 100"
 
