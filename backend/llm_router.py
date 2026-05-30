@@ -1,6 +1,12 @@
 """
-TokenForge LLM Router — async multi-provider LLM client supporting
-OpenAI, Anthropic, and Google Gemini via their official Python SDKs.
+TokenForge LLM Router — async multi-provider LLM client.
+
+Provider priority (cost-optimised):
+  1. Groq            — fastest free tier (llama/gemma/mixtral)
+  2. Google Gemini   — best free quality (gemini-2.0-flash, 1.5-flash)
+  3. OpenAI          — paid, highest quality
+  4. Anthropic       — paid, highest reasoning
+  5. Pollinations    — keyless free fallback (always available)
 
 API:
     chat = LlmChat(session_id=..., system_message=..., byok_keys={...}).with_model(provider, model)
@@ -14,23 +20,34 @@ the platform env key.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from typing import Optional
 
+import httpx
 from pydantic import BaseModel
 
 log = logging.getLogger("tokenforge.llm_router")
 
-# Lazy provider clients — module-level singletons (use platform env keys).
+# ---------------------------------------------------------------------------
+# Lazy provider clients
+# ---------------------------------------------------------------------------
 _openai_client = None
 _anthropic_client = None
 _gemini_client = None
+_groq_client = None
 
 
 def _make_openai(api_key: str):
     from openai import AsyncOpenAI
     return AsyncOpenAI(api_key=api_key)
+
+
+def _make_groq(api_key: str):
+    """Groq uses the OpenAI-compatible SDK with a custom base_url."""
+    from openai import AsyncOpenAI
+    return AsyncOpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
 
 
 def _make_anthropic(api_key: str):
@@ -43,10 +60,20 @@ def _make_gemini(api_key: str):
     return genai.Client(api_key=api_key)
 
 
+def _get_groq():
+    global _groq_client
+    if _groq_client is None:
+        key = os.environ.get("GROQ_API_KEY", "").strip()
+        if not key:
+            raise RuntimeError("GROQ_API_KEY is not configured on the platform")
+        _groq_client = _make_groq(key)
+    return _groq_client
+
+
 def _get_openai():
     global _openai_client
     if _openai_client is None:
-        key = os.environ.get("OPENAI_API_KEY")
+        key = os.environ.get("OPENAI_API_KEY", "").strip()
         if not key:
             raise RuntimeError("OPENAI_API_KEY is not configured on the platform")
         _openai_client = _make_openai(key)
@@ -56,7 +83,7 @@ def _get_openai():
 def _get_anthropic():
     global _anthropic_client
     if _anthropic_client is None:
-        key = os.environ.get("ANTHROPIC_API_KEY")
+        key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
         if not key:
             raise RuntimeError("ANTHROPIC_API_KEY is not configured on the platform")
         _anthropic_client = _make_anthropic(key)
@@ -66,16 +93,46 @@ def _get_anthropic():
 def _get_gemini():
     global _gemini_client
     if _gemini_client is None:
-        key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+        key = (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or "").strip()
         if not key:
             raise RuntimeError("GOOGLE_API_KEY (or GEMINI_API_KEY) is not configured on the platform")
         _gemini_client = _make_gemini(key)
     return _gemini_client
 
 
-# Provider model aliases — keeps the public proxy API stable while letting us
-# swap the actual SDK model identifier server-side (e.g. when a vendor renames).
+# ---------------------------------------------------------------------------
+# Platform provider availability
+# ---------------------------------------------------------------------------
+def platform_providers_available() -> list[str]:
+    """Return list of configured platform providers in cost-priority order."""
+    available = []
+    if os.environ.get("GROQ_API_KEY", "").strip():
+        available.append("groq")
+    if (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or "").strip():
+        available.append("gemini")
+    if os.environ.get("OPENAI_API_KEY", "").strip():
+        available.append("openai")
+    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        available.append("anthropic")
+    # Pollinations is always available (keyless free)
+    pollinations_enabled = os.environ.get("LLM_POLLINATIONS_FALLBACK", "true").lower() not in {"false", "0", "off"}
+    if pollinations_enabled:
+        available.append("pollinations")
+    return available
+
+
+# ---------------------------------------------------------------------------
+# Model alias tables
+# ---------------------------------------------------------------------------
 _MODEL_ALIASES = {
+    "groq": {
+        # Prefer the fastest/cheapest Groq models first
+        "default": "llama-3.3-70b-versatile",
+        "llama-3.3-70b-versatile": "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant": "llama-3.1-8b-instant",
+        "gemma2-9b-it": "gemma2-9b-it",
+        "mixtral-8x7b": "mixtral-8x7b-32768",
+    },
     "anthropic": {
         "claude-sonnet-4-6": "claude-sonnet-4-5",
         "claude-sonnet-4-5": "claude-sonnet-4-5",
@@ -83,7 +140,6 @@ _MODEL_ALIASES = {
         "claude-haiku-4-5": "claude-haiku-4-5",
     },
     "openai": {
-        # Pass-through; included for explicit allow-list semantics.
         "gpt-4o": "gpt-4o",
         "gpt-4o-mini": "gpt-4o-mini",
         "gpt-4.1": "gpt-4.1",
@@ -93,30 +149,98 @@ _MODEL_ALIASES = {
     "google": {
         "gemini-2.5-pro": "gemini-2.5-pro",
         "gemini-2.5-flash": "gemini-2.5-flash",
+        "gemini-2.0-flash": "gemini-2.0-flash",
         "gemini-1.5-pro": "gemini-1.5-pro",
         "gemini-1.5-flash": "gemini-1.5-flash",
     },
+    "gemini": {  # alias for google
+        "gemini-2.0-flash": "gemini-2.0-flash",
+        "gemini-2.5-flash": "gemini-2.5-flash",
+        "gemini-1.5-flash": "gemini-1.5-flash",
+    },
+    "pollinations": {
+        "default": "openai",
+        "openai": "openai",
+        "openai-fast": "openai-fast",
+        "mistral": "mistral",
+    },
 }
+
+# Default Groq models to try in order when model not specified
+GROQ_FALLBACK_MODELS = [
+    "llama-3.3-70b-versatile",
+    "gemma2-9b-it",
+    "llama-3.1-8b-instant",
+]
+
+# Default Gemini models to try in order
+GEMINI_FALLBACK_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-2.5-flash",
+    "gemini-1.5-flash",
+]
 
 
 def _resolve_model(provider: str, model: str) -> str:
-    table = _MODEL_ALIASES.get(provider.lower(), {})
-    return table.get(model, model)  # pass-through if not in alias table
+    prov = provider.lower()
+    table = _MODEL_ALIASES.get(prov, {})
+    if model in table:
+        return table[model]
+    if not model or model == "default":
+        return table.get("default", model)
+    return model  # pass-through
 
 
+# ---------------------------------------------------------------------------
+# Message models
+# ---------------------------------------------------------------------------
 class UserMessage(BaseModel):
     """Single-turn user message wrapper."""
     text: str
 
 
+# ---------------------------------------------------------------------------
+# Pollinations (keyless free API)
+# ---------------------------------------------------------------------------
+POLLINATIONS_URL = "https://text.pollinations.ai/openai"
+
+
+async def _pollinations_complete(system: str, user_text: str, model: str = "openai") -> str:
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_text},
+        ],
+        "max_tokens": 1024,
+        "temperature": 0.7,
+    }
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(
+            POLLINATIONS_URL,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        r.raise_for_status()
+        data = r.json()
+        return (data.get("choices", [{}])[0].get("message", {}).get("content", "") or "").strip()
+
+
+# ---------------------------------------------------------------------------
+# Main LlmChat class
+# ---------------------------------------------------------------------------
 class LlmChat:
     """
-    Async LLM chat client routed to OpenAI / Anthropic / Google Gemini.
+    Async LLM chat client with automatic failover across free and paid providers.
 
     Usage:
-        - constructor takes session_id, system_message, optional byok_keys dict
-        - .with_model(provider, model_name) selects the provider
-        - .send_message(UserMessage(text=...)) returns plain str
+        chat = LlmChat(session_id=..., system_message=..., byok_keys={...})
+        chat = chat.with_model(provider, model_name)
+        response = await chat.send_message(UserMessage(text="..."))
+
+    Provider routing:
+        - byok_keys override platform keys for Pro+ customers
+        - Platform fallback order: groq → gemini → openai → anthropic → pollinations
     """
 
     def __init__(
@@ -126,12 +250,6 @@ class LlmChat:
         system_message: Optional[str] = None,
         byok_keys: Optional[dict] = None,
     ) -> None:
-        """
-        byok_keys: optional {"openai": "sk-...", "anthropic": "sk-ant-...",
-                             "google": "AIza..."} from the customer's stored
-                   BYOK vault. When present, the matching provider call uses
-                   the customer key instead of the platform env key.
-        """
         self.session_id = session_id
         self.system_message = system_message or "You are a helpful assistant."
         self._provider: Optional[str] = None
@@ -144,17 +262,77 @@ class LlmChat:
         return self
 
     async def send_message(self, msg: UserMessage) -> str:
-        if not self._provider or not self._model:
-            raise RuntimeError("provider/model not set — call .with_model() first")
-        text = msg.text
-        resolved_model = _resolve_model(self._provider, self._model)
-        if self._provider == "openai":
-            return await self._openai(resolved_model, text)
-        if self._provider == "anthropic":
-            return await self._anthropic(resolved_model, text)
-        if self._provider in ("google", "gemini"):
-            return await self._gemini(resolved_model, text)
-        raise ValueError(f"unsupported provider: {self._provider}")
+        if not self._provider:
+            # Auto-select cheapest available platform provider
+            return await self._auto_route(msg.text)
+
+        provider = self._provider
+        model = _resolve_model(provider, self._model or "default")
+
+        if provider == "groq":
+            return await self._groq(model, msg.text)
+        if provider == "openai":
+            return await self._openai(model, msg.text)
+        if provider == "anthropic":
+            return await self._anthropic(model, msg.text)
+        if provider in ("google", "gemini"):
+            return await self._gemini(model, msg.text)
+        if provider == "pollinations":
+            return await _pollinations_complete(self.system_message, msg.text, model)
+
+        raise ValueError(f"Unsupported provider: {provider}")
+
+    async def _auto_route(self, user_text: str) -> str:
+        """Try providers in cost order until one succeeds."""
+        providers = platform_providers_available()
+        last_error: Exception = RuntimeError("No LLM providers configured")
+
+        for prov in providers:
+            try:
+                if prov == "groq":
+                    for model in GROQ_FALLBACK_MODELS:
+                        try:
+                            return await self._groq(model, user_text)
+                        except Exception:
+                            continue
+                elif prov == "gemini":
+                    for model in GEMINI_FALLBACK_MODELS:
+                        try:
+                            return await self._gemini(model, user_text)
+                        except Exception:
+                            continue
+                elif prov == "openai":
+                    return await self._openai("gpt-4o-mini", user_text)
+                elif prov == "anthropic":
+                    return await self._anthropic("claude-haiku-4-5", user_text)
+                elif prov == "pollinations":
+                    for model in ["openai", "openai-fast", "mistral"]:
+                        try:
+                            return await _pollinations_complete(self.system_message, user_text, model)
+                        except Exception:
+                            continue
+            except Exception as exc:
+                last_error = exc
+                log.warning("LLM auto-route: provider=%s failed: %s", prov, str(exc)[:120])
+                continue
+
+        raise RuntimeError(f"All LLM providers failed. Last: {last_error}")
+
+    # ── Provider implementations ──────────────────────────────────────────────
+
+    async def _groq(self, model: str, user_text: str) -> str:
+        byok = self._byok.get("groq")
+        client = _make_groq(byok) if byok else _get_groq()
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": self.system_message},
+                {"role": "user", "content": user_text},
+            ],
+            max_tokens=1024,
+            temperature=0.7,
+        )
+        return (resp.choices[0].message.content or "").strip()
 
     async def _openai(self, model: str, user_text: str) -> str:
         byok = self._byok.get("openai")
