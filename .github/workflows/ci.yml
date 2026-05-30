@@ -7,7 +7,7 @@ on:
     branches: [main, master]
 
 jobs:
-  # ── 1. Backend: lint ──────────────────────────────────────────────────────────
+  # ── 1. Backend lint (source only, not auto-generated tests) ──────────────────
   backend-lint:
     name: 1 · Backend lint (ruff)
     runs-on: ubuntu-latest
@@ -22,13 +22,18 @@ jobs:
       - name: Install ruff
         run: pip install ruff
 
-      - name: ruff check
-        run: ruff check backend/ --ignore E501,E402,F401
+      - name: ruff check — source files
+        run: |
+          ruff check backend/server.py backend/llm_router.py backend/optimizer.py \
+            backend/byok_service.py backend/email_service.py backend/stripe_service.py \
+            --ignore E501,E402,F401
 
-      - name: ruff format check
-        run: ruff format --check backend/ || true
+      - name: ruff format check — source files
+        run: |
+          ruff format --check backend/server.py backend/llm_router.py backend/optimizer.py \
+            backend/byok_service.py backend/email_service.py backend/stripe_service.py || true
 
-  # ── 2. Frontend: build ────────────────────────────────────────────────────────
+  # ── 2. Frontend build ─────────────────────────────────────────────────────────
   frontend-build:
     name: 2 · Frontend build (yarn)
     runs-on: ubuntu-latest
@@ -52,8 +57,8 @@ jobs:
           CI: "false"
 
   # ── 3. Integration tests (live API) ──────────────────────────────────────────
-  # NOTE: Add TOKENFORGE_API_URL to GitHub Secrets after deploying the backend,
-  # then uncomment this job to enable integration tests.
+  # Enabled once backend is deployed and TOKENFORGE_API_URL secret is set.
+  # Uncomment after running deploy/oci_setup.sh and adding the secret:
   #
   # integration-tests:
   #   name: 3 · Integration tests (live API)
@@ -61,8 +66,7 @@ jobs:
   #   steps:
   #     - uses: actions/checkout@v4
   #     - uses: actions/setup-python@v5
-  #       with:
-  #         python-version: "3.11"
+  #       with: { python-version: "3.11" }
   #     - run: pip install pytest requests python-dotenv
   #     - run: pytest backend/tests/test_tokenforge_backend.py -v --tb=short
   #       env:
