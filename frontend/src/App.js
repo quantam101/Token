@@ -5,7 +5,7 @@ import { Toaster } from "sonner";
 import { AuthProvider, useAuth } from "@/lib/auth";
 
 import Landing from "@/pages/Landing";
-import { Login, Register } from "@/pages/Auth";
+import { Login, Register, OAuthCallback } from "@/pages/Auth";
 import Pricing from "@/pages/Pricing";
 import Playground from "@/pages/Playground";
 import Dashboard from "@/pages/Dashboard";
@@ -40,6 +40,7 @@ function App() {
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/oauth/callback" element={<OAuthCallback />} />
           <Route path="/pricing" element={<Pricing />} />
           <Route path="/playground" element={<Playground />} />
           <Route path="/docs" element={<Docs />} />

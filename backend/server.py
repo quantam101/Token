@@ -23,8 +23,11 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Dict, Any
 
 import bcrypt
+import httpx
 import jwt
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, status
+from fastapi.responses import RedirectResponse
+from urllib.parse import urlencode
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
@@ -58,6 +61,10 @@ ACCESS_TTL_MIN = 60 * 24  # 24h
 STRIPE_API_KEY = os.environ["STRIPE_API_KEY"]
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@tokenforge.io")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin")
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "https://forge.alreadyherellc.com")
+GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "https://api.alreadyherellc.com/api/auth/google/callback")
 
 MODEL_PRICING_USD_PER_1K = {  # rough public list pricing (input tokens)
     "gpt-5.4": 0.005,
@@ -453,6 +460,79 @@ async def login(body: LoginIn, request: Request):
             "role": user.get("role", "user"),
         },
     }
+
+
+@api.get("/auth/google")
+async def google_oauth_start():
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=501, detail="Google OAuth not configured")
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "offline",
+        "prompt": "select_account",
+    }
+    return RedirectResponse("https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params))
+
+
+@api.get("/auth/google/callback")
+async def google_oauth_callback(code: str = None, error: str = None):
+    if error or not code:
+        return RedirectResponse(f"{FRONTEND_ORIGIN}/login?error=google_denied")
+    async with httpx.AsyncClient() as hx:
+        token_resp = await hx.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": GOOGLE_REDIRECT_URI,
+            },
+        )
+        if token_resp.status_code != 200:
+            return RedirectResponse(f"{FRONTEND_ORIGIN}/login?error=google_token")
+        access_token = token_resp.json().get("access_token")
+        user_resp = await hx.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if user_resp.status_code != 200:
+            return RedirectResponse(f"{FRONTEND_ORIGIN}/login?error=google_userinfo")
+        g = user_resp.json()
+
+    email = g["email"].lower().strip()
+    name = g.get("name") or email.split("@")[0]
+    user = await db.users.find_one({"email": email})
+    if not user:
+        uid = str(uuid.uuid4())
+        doc = {
+            "id": uid,
+            "email": email,
+            "password_hash": None,
+            "name": name,
+            "role": "user",
+            "plan": "free",
+            "monthly_quota": FREE_TIER_QUOTA,
+            "created_at": _iso(),
+            "google_id": g.get("id"),
+        }
+        await db.users.insert_one(doc)
+        await db.api_keys.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": uid,
+            "name": "Default",
+            "key": "tf_live_" + secrets.token_urlsafe(24),
+            "active": True,
+            "created_at": _iso(),
+            "last_used_at": None,
+        })
+        user = doc
+
+    jwt_token = make_token(user["id"], email)
+    return RedirectResponse(f"{FRONTEND_ORIGIN}/oauth/callback?token={jwt_token}")
 
 
 @api.get("/auth/me")

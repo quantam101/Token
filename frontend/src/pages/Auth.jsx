@@ -1,6 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
+import { setToken } from "@/lib/api";
+import { API } from "@/lib/api";
 import { MarketingNav, Footer } from "@/components/Nav";
 import { toast } from "sonner";
 
@@ -28,6 +30,8 @@ export function Login() {
 
   return (
     <AuthShell title="Sign in" subtitle="Welcome back to the forge.">
+      <GoogleButton text="Sign in with Google" />
+      <Divider />
       <form onSubmit={submit} className="space-y-4" data-testid="login-form">
         <Field label="Email">
           <input
@@ -107,6 +111,8 @@ export function Register() {
           <span className="ml-2 text-[rgb(var(--tf-text-2))]">+500,000 tokens unlocked on signup.</span>
         </div>
       )}
+      <GoogleButton text="Sign up with Google" />
+      <Divider />
       <form onSubmit={submit} className="space-y-4" data-testid="register-form">
         <Field label="Name">
           <input data-testid="register-name" value={name} onChange={(e) => setName(e.target.value)} className="tf-input" />
@@ -149,6 +155,61 @@ export function Register() {
         </Link>
       </div>
     </AuthShell>
+  );
+}
+
+function GoogleButton({ text = "Continue with Google" }) {
+  return (
+    <button
+      type="button"
+      onClick={() => { window.location.href = `${API}/auth/google`; }}
+      className="w-full flex items-center justify-center gap-3 border border-[rgb(var(--tf-border))] hover:border-white bg-transparent text-white font-medium px-5 py-3 rounded-md transition-colors"
+    >
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z" fill="#4285F4"/>
+        <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z" fill="#34A853"/>
+        <path d="M3.964 10.706A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.706V4.962H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.038l3.007-2.332z" fill="#FBBC05"/>
+        <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.962L3.964 6.294C4.672 4.167 6.656 3.58 9 3.58z" fill="#EA4335"/>
+      </svg>
+      {text}
+    </button>
+  );
+}
+
+function Divider() {
+  return (
+    <div className="flex items-center gap-3 my-4">
+      <div className="flex-1 h-px bg-[rgb(var(--tf-border))]" />
+      <span className="text-xs font-mono text-[rgb(var(--tf-text-muted))] uppercase tracking-widest">or</span>
+      <div className="flex-1 h-px bg-[rgb(var(--tf-border))]" />
+    </div>
+  );
+}
+
+export function OAuthCallback() {
+  const { refresh } = useAuth();
+  const nav = useNavigate();
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("token");
+    const error = params.get("error");
+    if (token) {
+      setToken(token);
+      refresh().then(() => {
+        toast.success("Signed in with Google");
+        nav("/dashboard", { replace: true });
+      });
+    } else {
+      toast.error(error === "google_denied" ? "Google sign-in cancelled" : "Google sign-in failed");
+      nav("/login", { replace: true });
+    }
+  }, [nav, refresh]);
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[rgb(var(--tf-bg))] text-[rgb(var(--tf-text-muted))] font-mono text-sm">
+      Signing in…
+    </div>
   );
 }
 
