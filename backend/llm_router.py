@@ -4,10 +4,11 @@ TokenForge LLM Router — async multi-provider LLM client.
 Provider priority (cost-optimised):
   0. LM Studio       — local OpenAI-compatible server (localhost:1234), highest priority
   1. Groq            — fastest free tier (llama/gemma/mixtral)
-  2. Google Gemini   — best free quality (gemini-2.0-flash, 1.5-flash)
-  3. OpenAI          — paid, highest quality
-  4. Anthropic       — paid, highest reasoning
-  5. Pollinations    — keyless free fallback (always available)
+  2. HuggingFace     — free cloud inference API, thousands of open models
+  3. Google Gemini   — best free quality (gemini-2.0-flash, 1.5-flash)
+  4. OpenAI          — paid, highest quality
+  5. Anthropic       — paid, highest reasoning
+  6. Pollinations    — keyless free fallback (always available)
 
 API:
     chat = LlmChat(session_id=..., system_message=..., byok_keys={...}).with_model(provider, model)
@@ -56,6 +57,13 @@ def _make_lmstudio(base_url: str = ""):
     from openai import AsyncOpenAI
     url = (base_url or os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")).rstrip("/")
     return AsyncOpenAI(api_key="lm-studio", base_url=url)
+
+
+def _make_huggingface(model: str, api_key: str):
+    """HuggingFace Inference API uses OpenAI-compatible endpoint per model."""
+    from openai import AsyncOpenAI
+    url = f"https://api-inference.huggingface.co/models/{model}/v1"
+    return AsyncOpenAI(api_key=api_key, base_url=url)
 
 
 def _make_anthropic(api_key: str):
@@ -135,6 +143,30 @@ def _get_lmstudio():
 
 
 # ---------------------------------------------------------------------------
+# HuggingFace helpers
+# ---------------------------------------------------------------------------
+def _hf_api_key() -> str:
+    """Return HuggingFace API token or empty string."""
+    return (
+        os.environ.get("HUGGINGFACE_API_KEY", "").strip()
+        or os.environ.get("HF_TOKEN", "").strip()
+    )
+
+
+def _hf_llm_models() -> list[str]:
+    """Ordered list of HuggingFace LLM models for text inference."""
+    raw = os.environ.get("HF_LLM_MODELS", "").strip()
+    if raw:
+        return [m.strip() for m in raw.split(",") if m.strip()]
+    return [
+        "meta-llama/Llama-3.2-3B-Instruct",
+        "microsoft/Phi-3.5-mini-instruct",
+        "mistralai/Mistral-7B-Instruct-v0.3",
+        "HuggingFaceH4/zephyr-7b-beta",
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Platform provider availability
 # ---------------------------------------------------------------------------
 def platform_providers_available() -> list[str]:
@@ -144,6 +176,8 @@ def platform_providers_available() -> list[str]:
         available.append("lmstudio")
     if os.environ.get("GROQ_API_KEY", "").strip():
         available.append("groq")
+    if _hf_api_key():
+        available.append("huggingface")
     if (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or "").strip():
         available.append("gemini")
     if os.environ.get("OPENAI_API_KEY", "").strip():
@@ -167,6 +201,13 @@ _MODEL_ALIASES = {
         "llama-3.2-3b-instruct": "llama-3.2-3b-instruct",
         "gemma-2-2b-it": "gemma-2-2b-it",
         "mistral-7b-instruct-v0.3": "mistral-7b-instruct-v0.3",
+    },
+    "huggingface": {
+        "default": "meta-llama/Llama-3.2-3B-Instruct",
+        "llama-3b": "meta-llama/Llama-3.2-3B-Instruct",
+        "phi-3.5": "microsoft/Phi-3.5-mini-instruct",
+        "mistral-7b": "mistralai/Mistral-7B-Instruct-v0.3",
+        "zephyr": "HuggingFaceH4/zephyr-7b-beta",
     },
     "groq": {
         # Prefer the fastest/cheapest Groq models first
@@ -221,6 +262,14 @@ GEMINI_FALLBACK_MODELS = [
     "gemini-2.0-flash",
     "gemini-2.5-flash",
     "gemini-1.5-flash",
+]
+
+# HuggingFace free LLM models to try in order
+HF_FALLBACK_MODELS = [
+    "meta-llama/Llama-3.2-3B-Instruct",
+    "microsoft/Phi-3.5-mini-instruct",
+    "mistralai/Mistral-7B-Instruct-v0.3",
+    "HuggingFaceH4/zephyr-7b-beta",
 ]
 
 
@@ -316,6 +365,8 @@ class LlmChat:
             return await self._lmstudio(model, msg.text)
         if provider == "groq":
             return await self._groq(model, msg.text)
+        if provider == "huggingface":
+            return await self._huggingface(model, msg.text)
         if provider == "openai":
             return await self._openai(model, msg.text)
         if provider == "anthropic":
@@ -346,6 +397,12 @@ class LlmChat:
                             return await self._groq(model, user_text)
                         except Exception:
                             continue
+                elif prov == "huggingface":
+                    for model in HF_FALLBACK_MODELS:
+                        try:
+                            return await self._huggingface(model, user_text)
+                        except Exception:
+                            continue
                 elif prov == "gemini":
                     for model in GEMINI_FALLBACK_MODELS:
                         try:
@@ -374,6 +431,24 @@ class LlmChat:
     async def _lmstudio(self, model: str, user_text: str) -> str:
         """Call LM Studio local server (OpenAI-compatible API at localhost:1234)."""
         client = _get_lmstudio()
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": self.system_message},
+                {"role": "user", "content": user_text},
+            ],
+            max_tokens=1024,
+            temperature=0.7,
+        )
+        return (resp.choices[0].message.content or "").strip()
+
+    async def _huggingface(self, model: str, user_text: str) -> str:
+        """Call HuggingFace Inference API — free, OpenAI-compatible."""
+        byok = self._byok.get("huggingface")
+        api_key = byok or _hf_api_key()
+        if not api_key:
+            raise RuntimeError("HUGGINGFACE_API_KEY or HF_TOKEN not set")
+        client = _make_huggingface(model, api_key)
         resp = await client.chat.completions.create(
             model=model,
             messages=[
