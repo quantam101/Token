@@ -2,6 +2,7 @@
 TokenForge LLM Router — async multi-provider LLM client.
 
 Provider priority (cost-optimised):
+  0. LM Studio       — local OpenAI-compatible server (localhost:1234), highest priority
   1. Groq            — fastest free tier (llama/gemma/mixtral)
   2. Google Gemini   — best free quality (gemini-2.0-flash, 1.5-flash)
   3. OpenAI          — paid, highest quality
@@ -48,6 +49,13 @@ def _make_groq(api_key: str):
     """Groq uses the OpenAI-compatible SDK with a custom base_url."""
     from openai import AsyncOpenAI
     return AsyncOpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+
+
+def _make_lmstudio(base_url: str = ""):
+    """LM Studio uses the OpenAI-compatible SDK with a local base_url."""
+    from openai import AsyncOpenAI
+    url = (base_url or os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")).rstrip("/")
+    return AsyncOpenAI(api_key="lm-studio", base_url=url)
 
 
 def _make_anthropic(api_key: str):
@@ -101,11 +109,39 @@ def _get_gemini():
 
 
 # ---------------------------------------------------------------------------
+# LM Studio helpers
+# ---------------------------------------------------------------------------
+def _lmstudio_enabled() -> bool:
+    """True when LM Studio local server is configured or explicitly enabled."""
+    if os.environ.get("LM_STUDIO_BASE_URL", "").strip():
+        return True
+    return os.environ.get("LM_STUDIO_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _lmstudio_model() -> str:
+    """The model name to use with LM Studio (matches what is loaded in the app)."""
+    raw = os.environ.get("LM_STUDIO_MODELS", "").strip()
+    first = raw.split(",")[0].strip() if raw else ""
+    return (
+        os.environ.get("LM_STUDIO_MODEL", "").strip()
+        or first
+        or "local-model"
+    )
+
+
+def _get_lmstudio():
+    """LM Studio client - no key needed, just a running local server."""
+    return _make_lmstudio()
+
+
+# ---------------------------------------------------------------------------
 # Platform provider availability
 # ---------------------------------------------------------------------------
 def platform_providers_available() -> list[str]:
     """Return list of configured platform providers in cost-priority order."""
     available = []
+    if _lmstudio_enabled():
+        available.append("lmstudio")
     if os.environ.get("GROQ_API_KEY", "").strip():
         available.append("groq")
     if (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or "").strip():
@@ -125,6 +161,13 @@ def platform_providers_available() -> list[str]:
 # Model alias tables
 # ---------------------------------------------------------------------------
 _MODEL_ALIASES = {
+    "lmstudio": {
+        "default": "local-model",
+        "local-model": "local-model",
+        "llama-3.2-3b-instruct": "llama-3.2-3b-instruct",
+        "gemma-2-2b-it": "gemma-2-2b-it",
+        "mistral-7b-instruct-v0.3": "mistral-7b-instruct-v0.3",
+    },
     "groq": {
         # Prefer the fastest/cheapest Groq models first
         "default": "llama-3.3-70b-versatile",
@@ -269,6 +312,8 @@ class LlmChat:
         provider = self._provider
         model = _resolve_model(provider, self._model or "default")
 
+        if provider == "lmstudio":
+            return await self._lmstudio(model, msg.text)
         if provider == "groq":
             return await self._groq(model, msg.text)
         if provider == "openai":
@@ -289,6 +334,12 @@ class LlmChat:
 
         for prov in providers:
             try:
+                if prov == "lmstudio":
+                    try:
+                        return await self._lmstudio(_lmstudio_model(), user_text)
+                    except Exception as exc:
+                        log.warning("LM Studio failed: %s - falling through", str(exc)[:120])
+                        continue
                 if prov == "groq":
                     for model in GROQ_FALLBACK_MODELS:
                         try:
@@ -319,6 +370,20 @@ class LlmChat:
         raise RuntimeError(f"All LLM providers failed. Last: {last_error}")
 
     # ── Provider implementations ──────────────────────────────────────────────
+
+    async def _lmstudio(self, model: str, user_text: str) -> str:
+        """Call LM Studio local server (OpenAI-compatible API at localhost:1234)."""
+        client = _get_lmstudio()
+        resp = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": self.system_message},
+                {"role": "user", "content": user_text},
+            ],
+            max_tokens=1024,
+            temperature=0.7,
+        )
+        return (resp.choices[0].message.content or "").strip()
 
     async def _groq(self, model: str, user_text: str) -> str:
         byok = self._byok.get("groq")
