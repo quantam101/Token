@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # opt into Node.js 24 before June 16, 2026 deadline
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   backend-lint:
@@ -58,53 +58,63 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
-      - name: Set up SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.OCI_SSH_KEY }}
-      - name: Add OCI host to known_hosts
+
+      - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
+          printf '%s' "${{ secrets.OCI_SSH_KEY }}" | tr -d ' \r\n' | base64 -d > ~/.ssh/deploy_key 2>/dev/null || \
+            printf '%s\n' "${{ secrets.OCI_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keygen -l -f ~/.ssh/deploy_key || { echo "ERROR: OCI_SSH_KEY is invalid"; exit 1; }
           ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
-      - name: Deploy Token backend via SSH
+
+      - name: Test SSH connectivity
+        run: |
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o ConnectTimeout=15 \
+            ${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }} \
+            "echo SSH_OK && hostname"
+
+      - name: Deploy Token backend
         env:
-          OCI_HOST: ${{ secrets.OCI_HOST }}
-          OCI_USER: ${{ secrets.OCI_USER }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          MONGODB_URL: ${{ secrets.MONGODB_URL }}
-          DB_NAME: ${{ secrets.DB_NAME }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15               -o ServerAliveInterval=20 -o ServerAliveCountMax=20               "${OCI_USER}@${OCI_HOST}"               env GITHUB_TOKEN="${GITHUB_TOKEN}" JWT_SECRET="${JWT_SECRET}" MONGODB_URL="${MONGODB_URL}" DB_NAME="${DB_NAME}" bash << 'ENDSSH'
-            set -e
-            TARGET=/opt/tokenforge
-            if [ -d "$TARGET/.git" ]; then
-              cd "$TARGET"
-              git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/quantam101/Token.git"
-              git pull origin main
-            else
-              sudo mkdir -p "$TARGET"
-              sudo chown ubuntu:ubuntu "$TARGET"
-              git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/quantam101/Token.git" "$TARGET"
-              cd "$TARGET"
-            fi
-            ENV_FILE="$TARGET/.env"
-            sudo touch "$ENV_FILE"
-            for KEY in JWT_SECRET MONGODB_URL DB_NAME; do
-              sudo sed -i "/^${KEY}=/d" "$ENV_FILE"
-            done
-            [ -n "${JWT_SECRET}" ]  && echo "JWT_SECRET=${JWT_SECRET}"  | sudo tee -a "$ENV_FILE" > /dev/null
-            [ -n "${MONGODB_URL}" ] && echo "MONGODB_URL=${MONGODB_URL}" | sudo tee -a "$ENV_FILE" > /dev/null
-            [ -n "${DB_NAME}" ]     && echo "DB_NAME=${DB_NAME}"         | sudo tee -a "$ENV_FILE" > /dev/null
-            export DOCKER_BUILDKIT=1
-            sudo -E docker compose -f docker-compose.yml build --no-cache backend 2>/dev/null || true
-            sudo docker compose -f docker-compose.yml up -d --remove-orphans 2>/dev/null || true
-            echo "Deploy complete"
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no -o ConnectTimeout=15 \
+            -o ServerAliveInterval=20 -o ServerAliveCountMax=20 \
+            ${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }} << 'ENDSSH'
+          set -e
+          TARGET=/opt/tokenforge
+          if [ -d "$TARGET/.git" ]; then
+            cd "$TARGET" && git pull origin main
+          else
+            sudo mkdir -p "$TARGET" && sudo chown $(whoami) "$TARGET"
+            git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/quantam101/Token.git" "$TARGET"
+            cd "$TARGET"
+          fi
+          cat > /tmp/be.env << ENV
+          MONGO_URL=mongodb://mongo:27017
+          DB_NAME=tokenforge
+          JWT_SECRET=${JWT_SECRET}
+          GROQ_API_KEY=${GROQ_API_KEY}
+          GOOGLE_API_KEY=${GOOGLE_API_KEY}
+          CORS_ORIGINS=https://forge.alreadyherellc.com,http://localhost:3000
+          LLM_POLLINATIONS_FALLBACK=true
+          ENV
+          sudo cp /tmp/be.env "$TARGET/backend/.env"
+          cd "$TARGET"
+          sudo docker compose up -d --build --remove-orphans backend mongo
+          echo "Deploy complete"
           ENDSSH
+
       - name: Verify API health
         continue-on-error: true
         run: |
           sleep 20
           HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://api.alreadyherellc.com/api/health || echo "000")
-          echo "Health check: $HTTP"
-          [ "$HTTP" = "200" ] && echo "DEPLOY SUCCESS" || echo "DEPLOY WARNING"
+          echo "Health: $HTTP"
+          [ "$HTTP" = "200" ] && echo "SUCCESS" || echo "::warning::Health $HTTP — check Caddy routing at api.alreadyherellc.com"
