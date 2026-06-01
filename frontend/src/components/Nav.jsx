@@ -19,6 +19,9 @@ export function MarketingNav() {
           <Link to="/playground" data-testid="nav-playground" className="hover:text-white">Playground</Link>
           <Link to="/pricing" data-testid="nav-pricing" className="hover:text-white">Pricing</Link>
           <Link to="/docs" data-testid="nav-docs" className="hover:text-white">Docs</Link>
+          <Link to="/enterprise" data-testid="nav-enterprise" className="hover:text-white">Enterprise</Link>
+          <Link to="/affiliate" data-testid="nav-affiliate" className="hover:text-white">Affiliate</Link>
+          <Link to="/refer" data-testid="nav-refer" className="hover:text-white text-[rgb(var(--tf-success))] font-medium">Refer →</Link>
         </nav>
         <div className="flex items-center gap-2">
           <Link to="/login" data-testid="nav-login" className="text-sm text-[rgb(var(--tf-text-2))] hover:text-white px-3 py-2">
@@ -120,6 +123,7 @@ export function Footer() {
           <ul className="space-y-2 text-[rgb(var(--tf-text-2))]">
             <li><Link to="/playground" className="hover:text-white">Playground</Link></li>
             <li><Link to="/pricing" className="hover:text-white">Pricing</Link></li>
+            <li><Link to="/enterprise" className="hover:text-white">Enterprise</Link></li>
             <li><Link to="/docs" className="hover:text-white">Docs</Link></li>
           </ul>
         </div>

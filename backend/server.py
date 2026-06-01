@@ -1519,11 +1519,90 @@ REFERRAL_BONUS_TOKENS = 500_000
 async def my_referral(user=Depends(current_user)):
     """Current user's referral code (== their UUID) + lifetime stats."""
     count = await db.referrals.count_documents({"referrer_id": user["id"]})
+    tier = "starter"
+    commission = 0.20
+    if count >= 15:
+        tier, commission = "partner", 0.30
+    elif count >= 5:
+        tier, commission = "growth", 0.25
     return {
         "code": user["id"],
         "referrals_count": count,
         "bonus_per_referral": REFERRAL_BONUS_TOKENS,
+        "affiliate_tier": tier,
+        "commission_pct": int(commission * 100),
     }
+
+
+class EnterpriseContactIn(BaseModel):
+    name: str = ""
+    email: str
+    company: str
+    volume: str = ""
+    message: str = ""
+
+
+@api.post("/enterprise/contact")
+async def enterprise_contact(body: EnterpriseContactIn, request: Request):
+    """Log enterprise lead and notify via GitHub issue (uses GITHUB_TOKEN env var)."""
+    import urllib.request as ureq, urllib.error
+
+    doc = {
+        "name": body.name,
+        "email": body.email,
+        "company": body.company,
+        "volume": body.volume,
+        "message": body.message,
+        "ip": request.client.host if request.client else "unknown",
+        "created_at": datetime.utcnow(),
+    }
+    await db.enterprise_leads.insert_one(doc)
+
+    # Optionally notify via GitHub issue comment
+    gh_token = os.getenv("GITHUB_TOKEN", "")
+    gh_repo = os.getenv("GITHUB_REPO", "quantam101/profitenginev5")
+    if gh_token and gh_repo:
+        try:
+            issue_body = (
+                f"## Enterprise Lead — {body.company}\n\n"
+                f"**Name:** {body.name}\n"
+                f"**Email:** {body.email}\n"
+                f"**Company:** {body.company}\n"
+                f"**Monthly LLM Spend:** {body.volume}\n\n"
+                f"**Message:**\n{body.message}\n\n"
+                f"_Auto-captured from /enterprise contact form_"
+            )
+            owner, repo = gh_repo.split("/")
+            req = ureq.Request(
+                f"https://api.github.com/repos/{owner}/{repo}/issues",
+                data=json.dumps({
+                    "title": f"Enterprise Lead: {body.company} ({body.email})",
+                    "body": issue_body,
+                    "labels": ["enterprise-lead"],
+                }).encode(),
+                headers={
+                    "Authorization": f"token {gh_token}",
+                    "Accept": "application/vnd.github.v3+json",
+                    "Content-Type": "application/json",
+                },
+                method="POST",
+            )
+            ureq.urlopen(req, timeout=8)
+        except Exception:
+            pass  # non-blocking
+
+    return {"ok": True}
+
+
+@api.post("/referrals/join-affiliate")
+async def join_affiliate(user=Depends(current_user)):
+    """Enroll user in affiliate program — idempotent."""
+    await db.users.update_one(
+        {"_id": user["_id"]},
+        {"$set": {"affiliate": True, "affiliate_joined_at": datetime.utcnow()}},
+    )
+    count = await db.referrals.count_documents({"referrer_id": user["id"]})
+    return {"ok": True, "referral_code": user["id"], "referrals_count": count}
 
 
 # ------------------------------------------------------------------
