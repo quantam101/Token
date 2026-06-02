@@ -66,7 +66,7 @@ function EarningsProjector() {
           </div>
           <div>
             <div className="text-xs font-mono text-[rgb(var(--tf-text-muted))] uppercase tracking-widest">Monthly earnings</div>
-            <div className="font-display text-4xl mt-1 text-[rgb(var(--tf-success))]">${monthly.toFixed(0)}<span className="text-lg text-[rgb(var(--tf-text-muted))]/mo</span></div>
+            <div className="font-display text-4xl mt-1 text-[rgb(var(--tf-success))]">${monthly.toFixed(0)}<span className="text-lg text-[rgb(var(--tf-text-muted))]">/mo</span></div>
           </div>
           <div>
             <div className="text-xs font-mono text-[rgb(var(--tf-text-muted))] uppercase tracking-widest">Annual earnings</div>
