@@ -50,7 +50,7 @@ jobs:
     name: 3 . Deploy backend to OCI
     needs: [backend-lint, frontend-build]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     if: |
       github.ref == 'refs/heads/main' &&
       needs.backend-lint.result == 'success' &&
