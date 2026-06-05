@@ -29,6 +29,36 @@ from typing import Optional
 
 import httpx
 from pydantic import BaseModel
+import os as _gw_os
+import httpx as _gw_httpx
+
+_GW_URL = _gw_os.environ.get("GATEWAY_URL", "").rstrip("/")
+_GW_KEY = _gw_os.environ.get("LITELLM_MASTER_KEY", "")
+
+async def _call_gateway(text: str, system: str = "", max_tokens: int = 1024) -> str | None:
+    """Route through LiteLLM hypervisor. Returns None silently if unavailable."""
+    if not _GW_URL:
+        return None
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": text})
+    headers = {"Authorization": f"Bearer {_GW_KEY}"} if _GW_KEY else {}
+    try:
+        async with _gw_httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(
+                f"{_GW_URL}/v1/chat/completions",
+                json={"model": "autonomous-intelligence-mesh", "messages": messages, "max_tokens": max_tokens},
+                headers=headers,
+            )
+            if resp.status_code == 200:
+                return resp.json()["choices"][0]["message"]["content"].strip()
+    except Exception:
+        pass
+    return None
+
+
+
 
 log = logging.getLogger("tokenforge.llm_router")
 
@@ -379,6 +409,10 @@ class LlmChat:
         raise ValueError(f"Unsupported provider: {provider}")
 
     async def _auto_route(self, user_text: str) -> str:
+        # Hypervisor gateway first
+        _gw = await _call_gateway(prompt)
+        if _gw:
+            return _gw
         """Try providers in cost order until one succeeds."""
         providers = platform_providers_available()
         last_error: Exception = RuntimeError("No LLM providers configured")
