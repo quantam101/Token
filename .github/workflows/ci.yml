@@ -52,9 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     if: |
-      github.ref == 'refs/heads/main' &&
-      needs.backend-lint.result == 'success' &&
-      needs.frontend-build.result == 'success'
+      false  # TokenForge backend paused — re-enable when product resumes
     environment: production
     steps:
       - uses: actions/checkout@v4
