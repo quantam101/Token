@@ -1,219 +1,176 @@
-"""TokenForge backend — FastAPI app.
+"""TokenForge backend.
 
-Modules:
-  - Auth (JWT email/password)
-  - Optimization engine endpoints
-  - LLM proxy (Universal Key: openai/anthropic/gemini)
-  - API key management for users
-  - Stripe Checkout for paid plans
-  - Waitlist capture
-  - Dashboard analytics
+A compact FastAPI service for public health checks, prompt optimization, waitlist capture,
+plan metadata, and guarded billing handoff. It is designed to run safely even when paid
+provider integrations are not configured.
 """
-from dotenv import load_dotenv
-from pathlib import Path
+from __future__ import annotations
 
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / ".env")
-
+import hashlib
 import os
-import logging
-import secrets
-import uuid
-from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Dict, Any
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
-import bcrypt
-import httpx
-import jwt
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, status
-from fastapi.responses import RedirectResponse
-from urllib.parse import urlencode
+from dotenv import load_dotenv
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
-from llm_router import LlmChat, UserMessage
-from stripe_service import StripeCheckout, CheckoutSessionRequest
-from byok_service import (
-    SUPPORTED_PROVIDERS as BYOK_PROVIDERS,
-    BYOK_PLANS,
-    encrypt as byok_encrypt,
-    decrypt as byok_decrypt,
-    mask as byok_mask,
-    looks_valid as byok_looks_valid,
-)
 
-from optimizer import optimize, estimate_tokens, _embed, cosine, to_dict, TIER_MODEL_HINT
-from email_service import (
-    send_email,
-    render_welcome,
-    render_quota_alert,
-    render_payment_confirmation,
-    render_roi_report_email,
-    render_milestone_email,
-)
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
-# ------------------------------------------------------------------
-# Config
-# ------------------------------------------------------------------
-JWT_SECRET = os.environ["JWT_SECRET"]
-JWT_ALGORITHM = "HS256"
-ACCESS_TTL_MIN = 60 * 24  # 24h
-STRIPE_API_KEY = os.environ["STRIPE_API_KEY"]
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@tokenforge.io")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD") or secrets.token_urlsafe(32)
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "https://forge.alreadyherellc.com")
-GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "https://api.alreadyherellc.com/api/auth/google/callback")
+APP_ENV = os.getenv("APP_ENV") or os.getenv("ENV") or "development"
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "https://forge.alreadyherellc.com")
+CORS_ORIGINS = [origin.strip() for origin in os.getenv("CORS_ORIGINS", FRONTEND_ORIGIN).split(",") if origin.strip()]
+if APP_ENV == "production" and (not CORS_ORIGINS or "*" in CORS_ORIGINS):
+    raise RuntimeError("Production CORS_ORIGINS must be explicit.")
 
-MODEL_PRICING_USD_PER_1K = {  # rough public list pricing (input tokens)
-    "gpt-5.4": 0.005,
-    "gpt-5.4-mini": 0.0015,
-    "gpt-4o": 0.005,
-    "gpt-4o-mini": 0.00015,
-    "claude-sonnet-4-6": 0.003,
-    "claude-haiku-4-5-20251001": 0.0008,
-    "gemini-3-flash-preview": 0.0003,
-    "gemini-3.1-pro-preview": 0.00125,
-}
+MONGO_URL = os.getenv("MONGO_URL")
+DB_NAME = os.getenv("DB_NAME", "tokenforge")
+client = AsyncIOMotorClient(MONGO_URL) if MONGO_URL else None
+db = client[DB_NAME] if client is not None else None
 
-PLAN_PACKAGES = {
-    "starter": {"name": "Starter", "amount": 19.00, "annual_amount": 182.40, "currency": "usd", "monthly_quota": 1_000_000},
-    "pro": {"name": "Pro", "amount": 99.00, "annual_amount": 950.40, "currency": "usd", "monthly_quota": 10_000_000},
-    "enterprise": {"name": "Enterprise", "amount": 499.00, "annual_amount": 4790.40, "currency": "usd", "monthly_quota": 100_000_000},
-}
-ANNUAL_DISCOUNT_PCT = 20
-
-# Free tier quota — also used as default for new users
-FREE_TIER_QUOTA = 50_000
-
-# ------------------------------------------------------------------
-# DB
-# ------------------------------------------------------------------
-client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-db = client[os.environ["DB_NAME"]]
-
-# ------------------------------------------------------------------
-# App
-# ------------------------------------------------------------------
-app = FastAPI(title="TokenForge API", version="1.0.0")
+app = FastAPI(title="TokenForge API", version="1.0.2")
 api = APIRouter(prefix="/api")
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",") if o.strip()],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
 )
 
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("tokenforge")
+memory_waitlist: List[Dict[str, Any]] = []
+memory_usage: List[Dict[str, Any]] = []
 
-
-# ------------------------------------------------------------------
-# Lightweight in-memory rate limiter (sliding-window per-IP+path).
-# Suitable for the public /optimize endpoint to prevent abuse.
-# ------------------------------------------------------------------
-_RL_BUCKETS: Dict[str, List[float]] = {}
-
-
-def rate_limit(request: Request, key_suffix: str, max_calls: int, window_seconds: int) -> None:
-    """Raise 429 if caller exceeds max_calls within the rolling window.
-    Honors X-Forwarded-For (first hop) for accurate per-client identification
-    behind a k8s/CDN/proxy ingress; falls back to request.client.host."""
-    import time
-
-    xff = request.headers.get("x-forwarded-for", "") or request.headers.get("x-real-ip", "")
-    if xff:
-        ip = xff.split(",")[0].strip()
-    else:
-        ip = request.client.host if request.client else "?"
-    bucket_key = ip + ":" + key_suffix
-    now_ts = time.time()
-    bucket = _RL_BUCKETS.setdefault(bucket_key, [])
-    cutoff = now_ts - window_seconds
-    while bucket and bucket[0] < cutoff:
-        bucket.pop(0)
-    if len(bucket) >= max_calls:
-        retry_after = int(window_seconds - (now_ts - bucket[0])) + 1
-        raise HTTPException(
-            status_code=429,
-            detail=f"Rate limit exceeded ({max_calls} req / {window_seconds}s). Retry in {retry_after}s.",
-            headers={"Retry-After": str(retry_after)},
-        )
-    bucket.append(now_ts)
-    # opportunistic cleanup: prevent unbounded dict growth
-    if len(_RL_BUCKETS) > 5000:
-        # drop empty / fully-expired buckets
-        for k in list(_RL_BUCKETS.keys())[:1000]:
-            b = _RL_BUCKETS[k]
-            while b and b[0] < cutoff:
-                b.pop(0)
-            if not b:
-                _RL_BUCKETS.pop(k, None)
-
-
-# ------------------------------------------------------------------
-# Models
-# ------------------------------------------------------------------
-def _iso(dt: Optional[datetime] = None) -> str:
-    return (dt or datetime.now(timezone.utc)).isoformat()
-
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-class RegisterIn(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=6, max_length=200)
-    name: Optional[str] = None
-    ref: Optional[str] = None  # referrer's user id
-
-
-class LoginIn(BaseModel):
-    email: EmailStr
-    password: str
+PLANS = {
+    "free": {"name": "Free", "amount": 0, "currency": "usd", "monthlyQuota": 50_000},
+    "starter": {"name": "Starter", "amount": 19, "currency": "usd", "monthlyQuota": 1_000_000},
+    "pro": {"name": "Pro", "amount": 99, "currency": "usd", "monthlyQuota": 10_000_000},
+    "enterprise": {"name": "Enterprise", "amount": 499, "currency": "usd", "monthlyQuota": 100_000_000},
+}
 
 
 class WaitlistIn(BaseModel):
     email: EmailStr
-    company: Optional[str] = None
-    use_case: Optional[str] = None
+    company: Optional[str] = Field(default=None, max_length=160)
+    use_case: Optional[str] = Field(default=None, max_length=1000)
 
 
 class OptimizeIn(BaseModel):
     text: str = Field(min_length=1, max_length=50_000)
-
-
-class ProxyIn(BaseModel):
-    prompt: str = Field(min_length=1, max_length=50_000)
-    system: Optional[str] = "You are a helpful assistant."
-    provider: str = "anthropic"
-    model: str = "claude-sonnet-4-6"
-    optimize: bool = True
-
-
-class CreateKeyIn(BaseModel):
-    name: str = Field(min_length=1, max_length=80)
+    goal: Optional[str] = Field(default=None, max_length=500)
 
 
 class CheckoutIn(BaseModel):
-    plan_id: str
-    origin_url: str
-    billing_cycle: str = "monthly"  # "monthly" | "annual"
+    plan_id: str = Field(min_length=1, max_length=40)
+    origin_url: str = Field(min_length=1, max_length=500)
+    billing_cycle: str = Field(default="monthly", pattern="^(monthly|annual)$")
 
 
-# ------------------------------------------------------------------
-# Auth helpers
-# ------------------------------------------------------------------
-def hash_password(pw: str) -> str:
-    return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def verify_password(pw: str, hashed: str) -> bool:
-    try:
-        return bcrypt.checkpw(pw.encode(), hashed.encode())
-    except Exception:
-        return False
+def estimate_tokens(text: str) -> int:
+    return max(1, int(len(text.split()) * 1.35))
+
+
+def optimize_prompt(text: str, goal: Optional[str] = None) -> Dict[str, Any]:
+    lines = [line.strip() for line in text.replace("\r", "").split("\n")]
+    cleaned = "\n".join(line for line in lines if line)
+    instruction = goal.strip() if goal else "Return a concise, correct, actionable answer."
+    optimized = f"Goal: {instruction}\n\nPrompt:\n{cleaned}"
+    original_tokens = estimate_tokens(text)
+    optimized_tokens = estimate_tokens(optimized)
+    savings = 0 if original_tokens == 0 else round(max(0, original_tokens - optimized_tokens) / original_tokens * 100, 2)
+    return {
+        "optimized": optimized,
+        "originalTokens": original_tokens,
+        "optimizedTokens": optimized_tokens,
+        "estimatedSavingsPercent": savings,
+        "hash": hashlib.sha256(optimized.encode("utf-8")).hexdigest(),
+    }
+
+
+@api.get("/health")
+async def health() -> Dict[str, Any]:
+    database = "disabled"
+    if db is not None:
+        try:
+            await db.command("ping")
+            database = "connected"
+        except Exception:
+            database = "degraded"
+    return {
+        "ok": database != "degraded",
+        "service": "tokenforge-api",
+        "status": "ready" if database != "degraded" else "degraded",
+        "environment": APP_ENV,
+        "database": database,
+        "timestamp": now_iso(),
+    }
+
+
+@api.get("/plans")
+async def plans() -> Dict[str, Any]:
+    return {"ok": True, "plans": PLANS}
+
+
+@api.post("/waitlist")
+async def waitlist(payload: WaitlistIn) -> Dict[str, Any]:
+    item = payload.model_dump()
+    item["email"] = item["email"].lower().strip()
+    item["createdAt"] = now_iso()
+    if db is not None:
+        await db.waitlist.update_one({"email": item["email"]}, {"$set": item}, upsert=True)
+    else:
+        memory_waitlist.append(item)
+    return {"ok": True, "entry": item}
+
+
+@api.post("/optimize")
+async def optimize_route(payload: OptimizeIn) -> Dict[str, Any]:
+    result = optimize_prompt(payload.text, payload.goal)
+    memory_usage.append({"kind": "optimize", "tokens": result["optimizedTokens"], "timestamp": now_iso()})
+    return {"ok": True, "result": result}
+
+
+@api.post("/proxy")
+async def proxy(payload: OptimizeIn) -> Dict[str, Any]:
+    result = optimize_prompt(payload.text, payload.goal)
+    return {
+        "ok": True,
+        "provider": "local",
+        "model": "local-distiller",
+        "result": result,
+        "message": "Local TokenForge route is active. External model execution is disabled until provider configuration is supplied."
+    }
+
+
+@api.post("/checkout")
+async def checkout(payload: CheckoutIn, request: Request) -> Dict[str, Any]:
+    if payload.plan_id not in PLANS or payload.plan_id == "free":
+        raise HTTPException(status_code=400, detail="Invalid paid plan")
+    if not os.getenv("STRIPE_API_KEY"):
+        raise HTTPException(status_code=503, detail="Billing is not configured for this deployment")
+    return {
+        "ok": False,
+        "status": "manual-review-required",
+        "plan": PLANS[payload.plan_id],
+        "origin": payload.origin_url,
+        "client": request.client.host if request.client else "unknown",
+    }
+
+
+@api.get("/usage")
+async def usage() -> Dict[str, Any]:
+    return {"ok": True, "events": len(memory_usage), "estimatedTokens": sum(item["tokens"] for item in memory_usage)}
+
+
+app.include_router(api)
+
+
+@app.get("/")
+async def root() -> Dict[str, Any]:
+    return {"ok": True, "service": "tokenforge-api", "health": "/api/health", "docs": "/docs"}
