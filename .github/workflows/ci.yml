@@ -12,7 +12,7 @@ env:
 
 jobs:
   backend-lint:
-    name: 1 . Backend lint (ruff)
+    name: Backend lint and format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,13 +22,13 @@ jobs:
           python-version: "3.11"
       - name: Install ruff
         run: pip install ruff
-      - name: ruff check
-        run: ruff check backend/server.py backend/llm_router.py backend/optimizer.py --ignore E501,E402,F401 || true
-      - name: ruff format check
-        run: ruff format --check backend/server.py backend/llm_router.py backend/optimizer.py || true
+      - name: Ruff check
+        run: ruff check backend/server.py backend/llm_router.py backend/optimizer.py --ignore E501,E402,F401
+      - name: Ruff format check
+        run: ruff format --check backend/server.py backend/llm_router.py backend/optimizer.py
 
   frontend-build:
-    name: 2 . Frontend build (yarn)
+    name: Frontend build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,32 +47,42 @@ jobs:
           CI: "false"
 
   deploy:
-    name: 3 . Deploy backend to OCI
+    name: Deploy backend to OCI
     needs: [backend-lint, frontend-build]
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    if: |
-      false  # TokenForge backend paused — re-enable when product resumes
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     environment: production
     steps:
       - uses: actions/checkout@v4
 
+      - name: Validate deployment secrets
+        env:
+          OCI_SSH_KEY: ${{ secrets.OCI_SSH_KEY }}
+          OCI_HOST: ${{ secrets.OCI_HOST }}
+          OCI_USER: ${{ secrets.OCI_USER }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: |
+          test -n "$OCI_SSH_KEY"
+          test -n "$OCI_HOST"
+          test -n "$OCI_USER"
+          test -n "$JWT_SECRET"
+          test -n "$GROQ_API_KEY"
+          test -n "$GOOGLE_API_KEY"
+
       - name: Set up SSH
         run: |
           mkdir -p ~/.ssh
-          printf '%s' "${{ secrets.OCI_SSH_KEY }}" | tr -d ' \r\n' | base64 -d > ~/.ssh/deploy_key 2>/dev/null || \
-            printf '%s\n' "${{ secrets.OCI_SSH_KEY }}" > ~/.ssh/deploy_key
+          printf '%s' "${{ secrets.OCI_SSH_KEY }}" | tr -d ' \r\n' | base64 -d > ~/.ssh/deploy_key 2>/dev/null || printf '%s\n' "${{ secrets.OCI_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keygen -l -f ~/.ssh/deploy_key || { echo "ERROR: OCI_SSH_KEY is invalid"; exit 1; }
-          ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh-keygen -l -f ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts
 
       - name: Test SSH connectivity
         run: |
-          ssh -i ~/.ssh/deploy_key \
-            -o StrictHostKeyChecking=no \
-            -o ConnectTimeout=15 \
-            ${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }} \
-            "echo SSH_OK && hostname"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=15 ${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }} "echo SSH_OK && hostname"
 
       - name: Deploy Token backend
         env:
@@ -81,11 +91,8 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
-          ssh -i ~/.ssh/deploy_key \
-            -o StrictHostKeyChecking=no -o ConnectTimeout=15 \
-            -o ServerAliveInterval=20 -o ServerAliveCountMax=20 \
-            ${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }} << 'ENDSSH'
-          set -e
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=20 ${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }} << 'ENDSSH'
+          set -euo pipefail
           TARGET=/opt/tokenforge
           if [ -d "$TARGET/.git" ]; then
             cd "$TARGET" && git pull origin main
@@ -100,21 +107,18 @@ jobs:
           JWT_SECRET=${JWT_SECRET}
           GROQ_API_KEY=${GROQ_API_KEY}
           GOOGLE_API_KEY=${GOOGLE_API_KEY}
-          CORS_ORIGINS=https://forge.alreadyherellc.com,http://localhost:3000
+          CORS_ORIGINS=https://forge.alreadyherellc.com
           LLM_POLLINATIONS_FALLBACK=true
           ENV
           sudo cp /tmp/be.env "$TARGET/backend/.env"
           cd "$TARGET"
-          sudo docker compose down --remove-orphans 2>/dev/null || true
-          sudo docker rm -f tokenforge-backend-1 2>/dev/null || true
+          sudo docker compose down --remove-orphans
           sudo docker compose up -d --build --remove-orphans backend mongo
-          echo "Deploy complete"
           ENDSSH
 
       - name: Verify API health
-        continue-on-error: true
         run: |
           sleep 20
-          HTTP=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 https://api.alreadyherellc.com/api/health || echo "000")
-          echo "Health: $HTTP"
-          [ "$HTTP" = "200" ] && echo "SUCCESS" || echo "::warning::Health $HTTP — check Caddy routing at api.alreadyherellc.com"
+          HTTP=$(curl -s -o /tmp/health.json -w "%{http_code}" --max-time 15 https://api.alreadyherellc.com/api/health || echo "000")
+          cat /tmp/health.json || true
+          test "$HTTP" = "200"
