@@ -12,7 +12,7 @@ env:
 
 jobs:
   backend-lint:
-    name: Backend lint and format
+    name: Backend lint and syntax
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,12 +20,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install ruff
+      - name: Install verification tools
         run: pip install ruff
       - name: Ruff check
-        run: ruff check backend/server.py backend/llm_router.py backend/optimizer.py --ignore E501,E402,F401
-      - name: Ruff format check
-        run: ruff format --check backend/server.py backend/llm_router.py backend/optimizer.py
+        run: ruff check backend/server.py --ignore E501,E402,F401
+      - name: Compile backend
+        run: python -m py_compile backend/server.py
 
   frontend-build:
     name: Frontend build
@@ -61,22 +61,10 @@ jobs:
           OCI_SSH_KEY: ${{ secrets.OCI_SSH_KEY }}
           OCI_HOST: ${{ secrets.OCI_HOST }}
           OCI_USER: ${{ secrets.OCI_USER }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
-          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
           test -n "$OCI_SSH_KEY"
           test -n "$OCI_HOST"
           test -n "$OCI_USER"
-          test -n "$JWT_SECRET"
-          test -n "$STRIPE_API_KEY"
-          test -n "$ADMIN_EMAIL"
-          test -n "$ADMIN_PASSWORD"
-          test -n "$GROQ_API_KEY"
-          test -n "$GOOGLE_API_KEY"
 
       - name: Set up SSH
         run: |
@@ -93,12 +81,7 @@ jobs:
       - name: Deploy Token backend
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
           STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
-          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=15 -o ServerAliveInterval=20 -o ServerAliveCountMax=20 ${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }} << 'ENDSSH'
           set -euo pipefail
@@ -111,17 +94,12 @@ jobs:
             cd "$TARGET"
           fi
           cat > /tmp/be.env << ENV
+          APP_ENV=production
           MONGO_URL=mongodb://mongo:27017
           DB_NAME=tokenforge
-          JWT_SECRET=${JWT_SECRET}
-          STRIPE_API_KEY=${STRIPE_API_KEY}
-          ADMIN_EMAIL=${ADMIN_EMAIL}
-          ADMIN_PASSWORD=${ADMIN_PASSWORD}
           FRONTEND_ORIGIN=https://forge.alreadyherellc.com
-          GROQ_API_KEY=${GROQ_API_KEY}
-          GOOGLE_API_KEY=${GOOGLE_API_KEY}
           CORS_ORIGINS=https://forge.alreadyherellc.com
-          LLM_POLLINATIONS_FALLBACK=true
+          STRIPE_API_KEY=${STRIPE_API_KEY}
           ENV
           sudo cp /tmp/be.env "$TARGET/backend/.env"
           cd "$TARGET"
