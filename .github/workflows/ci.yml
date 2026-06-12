@@ -75,10 +75,22 @@ jobs:
           ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts
 
       - name: Test SSH connectivity
+        id: ssh_check
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=15 ${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }} "echo SSH_OK && hostname"
+          # Connectivity/auth problems are environmental (host wedged, key not
+          # yet authorized) — report DEGRADED and skip the deploy instead of
+          # failing CI. Mirrors oci-exec.yml in profitenginev5. A deploy that
+          # *starts* and then breaks still fails the job below.
+          if ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=15 ${{ secrets.OCI_USER }}@${{ secrets.OCI_HOST }} "echo SSH_OK && hostname"; then
+            echo "reachable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "reachable=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::OCI host unreachable or SSH key not authorized — deploy skipped (DEGRADED). Authorize the deploy key via ssh-keywarden or OCI Console."
+            echo "Status: DEGRADED — deploy skipped, SSH unavailable" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Deploy Token backend
+        if: steps.ssh_check.outputs.reachable == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           STRIPE_API_KEY: ${{ secrets.STRIPE_API_KEY }}
@@ -108,6 +120,7 @@ jobs:
           ENDSSH
 
       - name: Verify API health
+        if: steps.ssh_check.outputs.reachable == 'true'
         run: |
           sleep 20
           HTTP=$(curl -s -o /tmp/health.json -w "%{http_code}" --max-time 15 https://api.alreadyherellc.com/api/health || echo "000")
