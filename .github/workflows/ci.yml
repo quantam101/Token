@@ -72,7 +72,9 @@ jobs:
           printf '%s' "${{ secrets.OCI_SSH_KEY }}" | tr -d ' \r\n' | base64 -d > ~/.ssh/deploy_key 2>/dev/null || printf '%s\n' "${{ secrets.OCI_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           ssh-keygen -l -f ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts
+          # Best-effort: every ssh below uses StrictHostKeyChecking=no, and a
+          # downed host must not fail CI here — the ssh_check step handles it.
+          ssh-keyscan -T 10 -H ${{ secrets.OCI_HOST }} >> ~/.ssh/known_hosts || true
 
       - name: Test SSH connectivity
         id: ssh_check
