@@ -1,6 +1,8 @@
 import axios from "axios";
 
-export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "";
+// Production default — the TokenForge backend on Render. The old relative
+// fallback ("") only worked behind the OCI Caddy proxy, which is gone.
+export const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || "https://tokenforge-api.onrender.com";
 export const API = `${BACKEND_URL}/api`;
 
 const TOKEN_KEY = "tf_token";
