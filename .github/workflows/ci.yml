@@ -51,7 +51,10 @@ jobs:
     needs: [backend-lint, frontend-build]
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # OCI box 129.146.236.177 decommissioned 2026-07-12 (Oracle account
+    # inaccessible). Re-enable once the TokenForge backend has a new host
+    # (see profitenginev5 Render migration for the pattern).
+    if: false
     environment: production
     steps:
       - uses: actions/checkout@v4
