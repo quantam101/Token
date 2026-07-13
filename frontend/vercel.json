@@ -5,5 +5,10 @@
   "framework": "create-react-app",
   "env": {
     "REACT_APP_BACKEND_URL": "https://tokenforge-api.onrender.com"
+  },
+  "build": {
+    "env": {
+      "REACT_APP_BACKEND_URL": "https://tokenforge-api.onrender.com"
+    }
   }
 }
