@@ -4,6 +4,6 @@
   "outputDirectory": "build",
   "framework": "create-react-app",
   "env": {
-    "REACT_APP_BACKEND_URL": "https://api.alreadyherellc.com"
+    "REACT_APP_BACKEND_URL": "https://tokenforge-api.onrender.com"
   }
 }
