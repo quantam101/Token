@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "control_plane": "quantam101/daily-command-os",
+  "dashboard_path": "/agents",
+  "api_path": "/api/agents",
+  "repo": "quantam101/Token",
+  "agents": ["token-economics", "token-security"],
+  "external_spend_usd": 0
+}
