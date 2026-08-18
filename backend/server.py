@@ -7,9 +7,10 @@ provider integrations are not configured.
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import APIRouter, FastAPI, HTTPException, Request
@@ -40,8 +41,8 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
-memory_waitlist: List[Dict[str, Any]] = []
-memory_usage: List[Dict[str, Any]] = []
+memory_waitlist: list[dict[str, Any]] = []
+memory_usage: list[dict[str, Any]] = []
 
 PLANS = {
     "free": {"name": "Free", "amount": 0, "currency": "usd", "monthlyQuota": 50_000},
@@ -53,13 +54,13 @@ PLANS = {
 
 class WaitlistIn(BaseModel):
     email: EmailStr
-    company: Optional[str] = Field(default=None, max_length=160)
-    use_case: Optional[str] = Field(default=None, max_length=1000)
+    company: str | None = Field(default=None, max_length=160)
+    use_case: str | None = Field(default=None, max_length=1000)
 
 
 class OptimizeIn(BaseModel):
     text: str = Field(min_length=1, max_length=50_000)
-    goal: Optional[str] = Field(default=None, max_length=500)
+    goal: str | None = Field(default=None, max_length=500)
 
 
 class CheckoutIn(BaseModel):
@@ -76,7 +77,7 @@ def estimate_tokens(text: str) -> int:
     return max(1, int(len(text.split()) * 1.35))
 
 
-def optimize_prompt(text: str, goal: Optional[str] = None) -> Dict[str, Any]:
+def optimize_prompt(text: str, goal: str | None = None) -> dict[str, Any]:
     lines = [line.strip() for line in text.replace("\r", "").split("\n")]
     cleaned = "\n".join(line for line in lines if line)
     instruction = goal.strip() if goal else "Return a concise, correct, actionable answer."
@@ -94,13 +95,14 @@ def optimize_prompt(text: str, goal: Optional[str] = None) -> Dict[str, Any]:
 
 
 @api.get("/health")
-async def health() -> Dict[str, Any]:
+async def health() -> dict[str, Any]:
     database = "disabled"
     if db is not None:
         try:
             await db.command("ping")
             database = "connected"
         except Exception:
+            logging.getLogger(__name__).warning("Database ping failed", exc_info=True)
             database = "degraded"
     return {
         "ok": database != "degraded",
@@ -113,12 +115,12 @@ async def health() -> Dict[str, Any]:
 
 
 @api.get("/plans")
-async def plans() -> Dict[str, Any]:
+async def plans() -> dict[str, Any]:
     return {"ok": True, "plans": PLANS}
 
 
 @api.post("/waitlist")
-async def waitlist(payload: WaitlistIn) -> Dict[str, Any]:
+async def waitlist(payload: WaitlistIn) -> dict[str, Any]:
     item = payload.model_dump()
     item["email"] = item["email"].lower().strip()
     item["createdAt"] = now_iso()
@@ -130,14 +132,14 @@ async def waitlist(payload: WaitlistIn) -> Dict[str, Any]:
 
 
 @api.post("/optimize")
-async def optimize_route(payload: OptimizeIn) -> Dict[str, Any]:
+async def optimize_route(payload: OptimizeIn) -> dict[str, Any]:
     result = optimize_prompt(payload.text, payload.goal)
     memory_usage.append({"kind": "optimize", "tokens": result["optimizedTokens"], "timestamp": now_iso()})
     return {"ok": True, "result": result}
 
 
 @api.post("/proxy")
-async def proxy(payload: OptimizeIn) -> Dict[str, Any]:
+async def proxy(payload: OptimizeIn) -> dict[str, Any]:
     result = optimize_prompt(payload.text, payload.goal)
     return {
         "ok": True,
@@ -149,7 +151,7 @@ async def proxy(payload: OptimizeIn) -> Dict[str, Any]:
 
 
 @api.post("/checkout")
-async def checkout(payload: CheckoutIn, request: Request) -> Dict[str, Any]:
+async def checkout(payload: CheckoutIn, request: Request) -> dict[str, Any]:
     if payload.plan_id not in PLANS or payload.plan_id == "free":
         raise HTTPException(status_code=400, detail="Invalid paid plan")
     if not os.getenv("STRIPE_API_KEY"):
@@ -164,7 +166,7 @@ async def checkout(payload: CheckoutIn, request: Request) -> Dict[str, Any]:
 
 
 @api.get("/usage")
-async def usage() -> Dict[str, Any]:
+async def usage() -> dict[str, Any]:
     return {"ok": True, "events": len(memory_usage), "estimatedTokens": sum(item["tokens"] for item in memory_usage)}
 
 
@@ -172,5 +174,5 @@ app.include_router(api)
 
 
 @app.get("/")
-async def root() -> Dict[str, Any]:
+async def root() -> dict[str, Any]:
     return {"ok": True, "service": "tokenforge-api", "health": "/api/health", "docs": "/docs"}
